@@ -1,0 +1,3 @@
+[submodule "src/ick"]
+	path = src/ick
+	url = https://github.com/jzy95310/ICK
