@@ -4,7 +4,7 @@
 import torch
 from torch import nn
 
-from typing import List
+from typing import List, Tuple
 from networks import ConvNet
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
@@ -72,17 +72,14 @@ class NonlinearSCI(nn.Module):
             assert len(self.intervention_coeffs) == self.num_interventions, \
                 "Number of intervention coefficients must match number of interventions."
         if self.unobserved_confounder:
-            assert 'kernel_func' in self.kwargs.keys(), \
-                "Must specify a kernel function for the ICK model."
+            assert 'kernel_func' in self.kwargs.keys() and 'kernel_param_vals' in self.kwargs.keys() and \
+            'inducing_point_space' in self.kwargs.keys(), \
+            "Must specify \'kernel_func\', \'kernel_param_vals\', and \'inducing_point_space\' when setting unobserved_confounder to True."
             assert self.kwargs['kernel_func'] in KERNEL_FUNCS.keys(), \
                 "The kernel function must be one of the following: rbf, periodic, exp, rq, \
                 matern_type1, matern_type2, linear, spectral_mixture."
-            assert 'kernel_param_vals' in self.kwargs.keys(), \
-                "Must provide initial values for kernel parameters."
             assert len(self.kwargs['kernel_param_vals']) == len(KERNEL_PARAMS[self.kwargs['kernel_func']]), \
                 "Number of initial values for kernel parameters must match number of kernel parameters."
-            assert 'inducing_point_space' in self.kwargs.keys(), \
-                "Must provide space of inducing points for Nystrom approximation."
     
     def _build_model(self) -> None:
         """
@@ -118,6 +115,72 @@ class NonlinearSCI(nn.Module):
                 }
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
+    
+    def forward(self, x: Tuple) -> torch.Tensor:
+        """
+        x: Tuple, a tuple containing the interventions and confounders
+        """
+        assert len(x) == self.num_interventions + self.num_confounders + self.num_spatial_confounders, \
+            "Number of inputs must match number of interventions and confounders."
+        interventions = x[:self.num_interventions]
+        confounders = x[self.num_interventions:self.num_interventions+self.num_confounders]
+        spatial_confounders = x[self.num_interventions+self.num_confounders:]
+        for i in range(self.num_interventions):
+            interventions[i] = interventions[i] * getattr(self, f"coeff_{i}")
+        for i in range(self.num_confounders):
+            confounders[i] = getattr(self, f"convnet_confounder_{i}")(confounders[i]).squeeze()
+        for i in range(self.num_spatial_confounders):
+            spatial_confounders[i] = getattr(self, f"convnet_spatial_confounder_{i}")(spatial_confounders[i]).squeeze()
+        return torch.sum(torch.stack(interventions + confounders + spatial_confounders), dim=0)
+    
+    def forward_ick(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
+        of the training data
+        """
+        return self.gp_unobserved_confounder(x)
+    
+    def freeze_coefficients(self) -> None:
+        """
+        Freeze both the coefficients for interventions and the convolutional neural networks for confounders
+        """
+        for i in range(self.num_interventions):
+            getattr(self, f"coeff_{i}").requires_grad = False
+        for i in range(self.num_confounders):
+            for param in getattr(self, f"convnet_confounder_{i}").parameters():
+                param.requires_grad = False
+        for i in range(self.num_spatial_confounders):
+            for param in getattr(self, f"convnet_spatial_confounder_{i}").parameters():
+                param.requires_grad = False
+    
+    def unfreeze_coefficients(self) -> None:
+        """
+        Unfreeze both the coefficients for interventions and the convolutional neural networks for confounders
+        """
+        for i in range(self.num_interventions):
+            getattr(self, f"coeff_{i}").requires_grad = True
+        for i in range(self.num_confounders):
+            for param in getattr(self, f"convnet_confounder_{i}").parameters():
+                param.requires_grad = True
+        for i in range(self.num_spatial_confounders):
+            for param in getattr(self, f"convnet_spatial_confounder_{i}").parameters():
+                param.requires_grad = True
+    
+    def freeze_ick(self) -> None:
+        """
+        Freeze the ICK model for unobserved confounder
+        """
+        if self.unobserved_confounder:
+            for param in self.gp_unobserved_confounder.parameters():
+                param.requires_grad = False
+    
+    def unfreeze_ick(self) -> None:
+        """
+        Unfreeze the ICK model for unobserved confounder
+        """
+        if self.unobserved_confounder:
+            for param in self.gp_unobserved_confounder.parameters():
+                param.requires_grad = True
         
 # ########################################################################################
 # MIT License
