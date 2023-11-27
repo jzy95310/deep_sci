@@ -72,9 +72,6 @@ class NonlinearSCI(nn.Module):
             assert len(self.intervention_coeffs) == self.num_interventions, \
                 "Number of intervention coefficients must match number of interventions."
         if self.unobserved_confounder:
-            assert 'kernel_func' in self.kwargs.keys() and 'kernel_param_vals' in self.kwargs.keys() and \
-            'inducing_point_space' in self.kwargs.keys(), \
-            "Must specify \'kernel_func\', \'kernel_param_vals\', and \'inducing_point_space\' when setting unobserved_confounder to True."
             assert self.kwargs['kernel_func'] in KERNEL_FUNCS.keys(), \
                 "The kernel function must be one of the following: rbf, periodic, exp, rq, \
                 matern_type1, matern_type2, linear, spectral_mixture."
@@ -105,13 +102,13 @@ class NonlinearSCI(nn.Module):
             kernel_assignment = ['ImplicitNystromKernel']
             kernel_params = {
                 'ImplicitNystromKernel': {
-                    'kernel_func': KERNEL_FUNCS[self.kwargs['kernel_func']], 
-                    'params': KERNEL_PARAMS[self.kwargs['kernel_func']], 
-                    'vals': self.kwargs['kernel_param_vals'], 
-                    'trainable': [True] * len(KERNEL_PARAMS[self.kwargs['kernel_func']]), 
+                    'kernel_func': KERNEL_FUNCS[self.kwargs.get('kernel_func', 'rbf')], 
+                    'params': KERNEL_PARAMS[self.kwargs.get('kernel_func', 'rbf')], 
+                    'vals': self.kwargs.get('kernel_param_vals', [1.,1.,0.5]), 
+                    'trainable': [True] * len(KERNEL_PARAMS[self.kwargs.get('kernel_func', 'rbf')]), 
                     'alpha': self.kwargs.get('alpha', 1e-5),
                     'num_inducing_points': self.kwargs.get('num_inducing_points', 32),
-                    'nys_space': self.kwargs['inducing_point_space']
+                    'nys_space': self.kwargs.get('inducing_point_space', [[0.,1.]])
                 }
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
