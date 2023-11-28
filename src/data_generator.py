@@ -10,22 +10,24 @@ from torch.utils.data import Dataset
 class SpatialDataset(Dataset):
     """
     Defines a dataset containing all variables for spatial causal inference
-    All 2-dimensional arrays will have the value at the center set to zero to account
-    for neighboring effects
 
     Arguments
     --------------
     features: List[np.ndarray], A list of numpy arrays containing the gridded features for each sample
+    spatial_features: np.ndarray, A numpy array containing the spatial features for each sample
     targets: List, A list of the targets for each sample
     """
-    def __init__(self, features: List[np.ndarray], targets: np.ndarray) -> None:
+    def __init__(self, features: List[np.ndarray], spatial_features: np.ndarray, targets: np.ndarray) -> None:
         self.features: List[np.ndarray] = features
+        self.spatial_features: np.ndarray = spatial_features
         self.targets: np.ndarray = targets
         self._validate_and_preprocess_inputs()
         
     def _validate_and_preprocess_inputs(self) -> None:
         assert all([len(feat) == len(self.targets) for feat in self.features]), \
             "Features and targets must be the same length"
+        assert len(self.spatial_features) == len(self.targets), \
+            "Spatial features and targets must be the same length"
     
     def __len__(self) -> int:
         return len(self.targets)
@@ -33,8 +35,8 @@ class SpatialDataset(Dataset):
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        return tuple([torch.from_numpy(feat[idx]).float() for feat in self.features]), \
-            torch.from_numpy(self.targets[idx]).float()
+        return list([torch.from_numpy(feat[idx]).float() for feat in self.features]), \
+            torch.from_numpy(self.spatial_features[idx]).float(), torch.from_numpy(self.targets[idx]).float()
 
 # ########################################################################################
 # MIT License

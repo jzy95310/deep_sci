@@ -113,9 +113,11 @@ class NonlinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, x: Tuple) -> torch.Tensor:
+    def forward(self, x: List, s: torch.Tensor = None) -> torch.Tensor:
         """
-        x: Tuple, a tuple containing the interventions and confounders
+        x: List, a list containing the interventions and confounders
+        s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
+            of the training data, only used when unobserved_confounder is True
         """
         assert len(x) == self.num_interventions + self.num_confounders + self.num_spatial_confounders, \
             "Number of inputs must match number of interventions and confounders."
@@ -128,14 +130,8 @@ class NonlinearSCI(nn.Module):
             confounders[i] = getattr(self, f"convnet_confounder_{i}")(confounders[i]).squeeze()
         for i in range(self.num_spatial_confounders):
             spatial_confounders[i] = getattr(self, f"convnet_spatial_confounder_{i}")(spatial_confounders[i]).squeeze()
-        return torch.sum(torch.stack(interventions + confounders + spatial_confounders), dim=0)
-    
-    def forward_ick(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
-        of the training data
-        """
-        return self.gp_unobserved_confounder(x)
+        output = torch.sum(torch.stack(interventions + confounders + spatial_confounders), dim=0)
+        return output if not self.unobserved_confounder else output + self.gp_unobserved_confounder(s)
     
     def freeze_coefficients(self) -> None:
         """
