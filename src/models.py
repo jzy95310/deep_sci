@@ -4,8 +4,8 @@
 import torch
 from torch import nn
 
-from typing import List, Tuple
-from networks import ConvNet
+from typing import List
+from networks import MLP, ConvNet
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
 
@@ -40,8 +40,11 @@ class NonlinearSCI(nn.Module):
     num_interventions: int, the total number of treatments
     num_confounders: int, the total number of non-spatial confounders
     num_spatial_confounders: int, the total number of spatial confounders
+    confounder_size: int, the dimension of non-spatial confounders
     window_size: int, grid size for spatial/non-spatial confounders
-    confounder_channels: int, number of channels for non-spatial confounders, default to 3
+    confounder_type: str, the model type for non-spatial confounders, default to "mlp"
+    confounder_hidden_dims: List[int], the dimensions of hidden layers for non-spatial confounders, default to [128,64]
+    confounder_channels: int, number of channels for non-spatial confounders, default to 1
     spatial_confounder_channels: int, number of channels for spatial confounders, default to 1
     unobserved_confounder: bool, whether to include an unobserved confounder
     intervention_coeffs: List[int], the coefficients for each intervention, optional
@@ -51,14 +54,18 @@ class NonlinearSCI(nn.Module):
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
-    def __init__(self, num_interventions: int, num_confounders: int, num_spatial_confounders: int, 
-                 window_size: int, confounder_channels: int = 3, spatial_confounder_channels: int = 1, 
-                 unobserved_confounder: bool = False, intervention_coeffs: List[float] = None, **kwargs) -> None:
+    def __init__(self, num_interventions: int, num_confounders: int, num_spatial_confounders: int, confounder_size: int,
+                 window_size: int, confounder_type: str = "mlp", confounder_hidden_dims: List[int] = [128,64], 
+                 confounder_channels: int = 1, spatial_confounder_channels: int = 1, unobserved_confounder: bool = False, 
+                 intervention_coeffs: List[float] = None, **kwargs) -> None:
         super(NonlinearSCI, self).__init__()
         self.num_interventions: int = num_interventions
         self.num_confounders: int = num_confounders
         self.num_spatial_confounders: int = num_spatial_confounders
+        self.confounder_size: int = confounder_size
         self.window_size: int = window_size
+        self.confounder_type: str = confounder_type
+        self.confounder_hidden_dims: List[int] = confounder_hidden_dims
         self.confounder_channels: int = confounder_channels
         self.spatial_confounder_channels: int = spatial_confounder_channels
         self.unobserved_confounder: bool = unobserved_confounder
@@ -95,7 +102,11 @@ class NonlinearSCI(nn.Module):
             else:
                 setattr(self, f"coeff_{i}", nn.Parameter(torch.randn(1)))
         for i in range(self.num_confounders):
-            setattr(self, f"convnet_confounder_{i}", ConvNet(self.window_size, self.window_size, self.confounder_channels))
+            if self.confounder_type == "mlp":
+                setattr(self, f"mlp_confounder_{i}", MLP(self.confounder_size, len(self.confounder_hidden_dims),
+                                                         self.confounder_hidden_dims))
+            else:
+                setattr(self, f"convnet_confounder_{i}", ConvNet(self.window_size, self.window_size, self.confounder_channels))
         for i in range(self.num_spatial_confounders):
             setattr(self, f"convnet_spatial_confounder_{i}", ConvNet(self.window_size, self.window_size, self.spatial_confounder_channels))
         if self.unobserved_confounder:

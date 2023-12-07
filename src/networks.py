@@ -3,6 +3,7 @@
 
 import torch
 from torch import nn
+from typing import List, Union
 
 class Erf(nn.Module):
     def __init__(self):
@@ -23,6 +24,63 @@ ACTIVATIONS = {
     "erf": Erf(),
 }
 
+class MLP(nn.Module):
+    """
+    Defines a multi-layer perceptron
+
+    Arguments
+    --------------
+    input_dim: int, the dimension of input tensor
+    num_hidden_layers: int, the number of hidden layers
+    hidden_dims: int or list of int, the dimensions of hidden layers
+    batch_norm: bool, whether to use batch normalization in each hidden layer, default to False
+    p_dropout: float, the dropout probability, default to 0.0
+    activation: str, the activation function to use, default to "relu"
+    """
+    def __init__(self, input_dim: int, num_hidden_layers: int, hidden_dims: Union[int, List[int]], 
+                 batch_norm: bool = False, p_dropout: float = 0.0, activation: str = "relu") -> None:
+        super(MLP, self).__init__()
+        self.input_dim: int = input_dim
+        self.num_hidden_layers: int = num_hidden_layers
+        self.hidden_dims: Union[int, List[int]] = hidden_dims
+        self.batch_norm: bool = batch_norm
+        self.p_dropout: float = p_dropout
+        self.activation: str = activation
+        self._validate_inputs()
+        self._build_layers()
+    
+    def _validate_inputs(self) -> None:
+        if isinstance(self.hidden_dims, List):
+            assert len(self.hidden_dims) == self.num_hidden_layers, \
+                "Number of hidden layers must match the length of hidden dimensions"
+        assert self.p_dropout >= 0 and self.p_dropout < 1, "Dropout probability must be in [0, 1)"
+        assert self.activation in ACTIVATIONS, "Activation function must be one of {}".format(ACTIVATIONS.keys())
+    
+    def _build_layers(self) -> None:
+        """
+        Build the hidden layers
+        """
+        layers = []
+        if isinstance(self.hidden_dims, int):
+            hidden_dims = [self.hidden_dims] * self.num_hidden_layers
+        else:
+            hidden_dims = self.hidden_dims
+        for i in range(self.num_hidden_layers):
+            if i == 0:
+                layers.append(nn.Linear(self.input_dim, hidden_dims[i]))
+            else:
+                layers.append(nn.Linear(hidden_dims[i - 1], hidden_dims[i]))
+            if self.batch_norm:
+                layers.append(nn.BatchNorm1d(hidden_dims[i]))
+            layers.append(ACTIVATIONS[self.activation])
+            if self.p_dropout > 0:
+                layers.append(nn.Dropout(self.p_dropout))
+        layers.append(nn.Linear(hidden_dims[-1], 1))
+        self.mlp_layers = nn.Sequential(*layers)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp_layers(x)
+
 class ConvNet(nn.Module):
     """
     Defines a convolutional neural network for processing spatial confounders
@@ -41,7 +99,7 @@ class ConvNet(nn.Module):
     """
     def __init__(self, input_width: int, input_height: int, num_channels: int = 1, kernel_size: int = 7, 
                  stride: int = 3, intermediate_channels: int = 64, batch_norm: bool = False, p_dropout: float = 0.0, 
-                 activation: str = "tanh"):
+                 activation: str = "tanh") -> None:
         super(ConvNet, self).__init__()
         self.input_width: int = input_width
         self.input_height: int = input_height
@@ -55,12 +113,12 @@ class ConvNet(nn.Module):
         self._validate_inputs()
         self._build_layers()
     
-    def _validate_inputs(self):
+    def _validate_inputs(self) -> None:
         assert self.p_dropout >= 0 and self.p_dropout < 1, "Dropout probability must be in [0, 1)"
         assert self.kernel_size <= min(self.input_width, self.input_height), "Kernel size must be smaller than input size"
         assert self.activation in ACTIVATIONS, "Activation function must be one of {}".format(ACTIVATIONS.keys())
     
-    def _build_layers(self):
+    def _build_layers(self) -> None:
         """
         Build the convolutional layers. The stride will be decremented by 1 for each layer, and
         the kernel size will be decremented by 2 for each layer. 
@@ -88,7 +146,7 @@ class ConvNet(nn.Module):
         layers.append(nn.Linear(input_width * input_height * self.intermediate_channels, 1))
         self.conv_layers = nn.Sequential(*layers)
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.conv_layers(x)
 
 # ########################################################################################
