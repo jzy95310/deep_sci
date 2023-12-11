@@ -17,8 +17,8 @@ class SpatialDataset(Dataset):
     spatial_features: np.ndarray, A numpy array containing the spatial features for each sample
     targets: List, A list of the targets for each sample
     """
-    def __init__(self, features: List[np.ndarray], spatial_features: np.ndarray, targets: np.ndarray) -> None:
-        self.features: List[np.ndarray] = features
+    def __init__(self, features: List, spatial_features: np.ndarray, targets: np.ndarray) -> None:
+        self.features: List = features
         self.spatial_features: np.ndarray = spatial_features
         self.targets: np.ndarray = targets
         self._validate_and_preprocess_inputs()
@@ -35,8 +35,38 @@ class SpatialDataset(Dataset):
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        return list([torch.from_numpy(feat[idx]).float() for feat in self.features]), \
-            torch.from_numpy(self.spatial_features[idx]).float(), torch.from_numpy(self.targets[idx]).float()
+        return list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.features]), \
+            torch.from_numpy(self.spatial_features[idx]).float() if isinstance(self.spatial_features[idx], np.ndarray) else torch.tensor(self.spatial_features[idx]), \
+            torch.tensor(self.targets[idx]).float()
+
+def train_val_test_split(features: List, spatial_features: np.ndarray, targets: np.ndarray, train_size: float = 0.7,
+                         val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020) -> Tuple:
+    """
+    Splits the dataset into training, validation, and test sets
+    If shuffle is set to True, the data will be shuffled before splitting
+    """
+    assert train_size + val_size + test_size == 1.0, "Train, validation, and test sizes must sum to 1"
+    assert all([len(feat) == len(targets) for feat in features]), "Features and targets must be the same length"
+    assert len(spatial_features) == len(targets), "Spatial features and targets must be the same length"
+
+    if shuffle:
+        np.random.seed(random_state)
+        idx = np.random.permutation(len(targets))
+        features = [feat[idx] for feat in features]
+        spatial_features = spatial_features[idx]
+        targets = targets[idx]
+    
+    train_idx = int(train_size * len(targets))
+    val_idx = int((train_size + val_size) * len(targets))
+
+    train_features, train_spatial_features = [feat[:train_idx] for feat in features], spatial_features[:train_idx]
+    val_features, val_spatial_features = [feat[train_idx:val_idx] for feat in features], spatial_features[train_idx:val_idx]
+    test_features, test_spatial_features = [feat[val_idx:] for feat in features], spatial_features[val_idx:]
+    train_targets, val_targets, test_targets = targets[:train_idx], targets[train_idx:val_idx], targets[val_idx:]
+
+    return SpatialDataset(train_features, train_spatial_features, train_targets), \
+        SpatialDataset(val_features, val_spatial_features, val_targets), \
+        SpatialDataset(test_features, test_spatial_features, test_targets)
 
 # ########################################################################################
 # MIT License

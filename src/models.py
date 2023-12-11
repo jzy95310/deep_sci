@@ -40,7 +40,7 @@ class NonlinearSCI(nn.Module):
     num_interventions: int, the total number of treatments
     num_confounders: int, the total number of non-spatial confounders
     num_spatial_confounders: int, the total number of spatial confounders
-    confounder_size: int, the dimension of non-spatial confounders
+    confounder_dim: int, the dimension of non-spatial confounders
     window_size: int, grid size for spatial/non-spatial confounders
     confounder_type: str, the model type for non-spatial confounders, default to "mlp"
     confounder_hidden_dims: List[int], the dimensions of hidden layers for non-spatial confounders, default to [128,64]
@@ -54,7 +54,7 @@ class NonlinearSCI(nn.Module):
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
-    def __init__(self, num_interventions: int, num_confounders: int, num_spatial_confounders: int, confounder_size: int,
+    def __init__(self, num_interventions: int, num_confounders: int, num_spatial_confounders: int, confounder_dim: int,
                  window_size: int, confounder_type: str = "mlp", confounder_hidden_dims: List[int] = [128,64], 
                  confounder_channels: int = 1, spatial_confounder_channels: int = 1, unobserved_confounder: bool = False, 
                  intervention_coeffs: List[float] = None, **kwargs) -> None:
@@ -62,7 +62,7 @@ class NonlinearSCI(nn.Module):
         self.num_interventions: int = num_interventions
         self.num_confounders: int = num_confounders
         self.num_spatial_confounders: int = num_spatial_confounders
-        self.confounder_size: int = confounder_size
+        self.confounder_dim: int = confounder_dim
         self.window_size: int = window_size
         self.confounder_type: str = confounder_type
         self.confounder_hidden_dims: List[int] = confounder_hidden_dims
@@ -78,12 +78,6 @@ class NonlinearSCI(nn.Module):
         if self.intervention_coeffs is not None:
             assert len(self.intervention_coeffs) == self.num_interventions, \
                 "Number of intervention coefficients must match number of interventions."
-        if self.unobserved_confounder:
-            assert self.kwargs['kernel_func'] in KERNEL_FUNCS.keys(), \
-                "The kernel function must be one of the following: rbf, periodic, exp, rq, \
-                matern_type1, matern_type2, linear, spectral_mixture."
-            assert len(self.kwargs['kernel_param_vals']) == len(KERNEL_PARAMS[self.kwargs['kernel_func']]), \
-                "Number of initial values for kernel parameters must match number of kernel parameters."
     
     def _build_model(self) -> None:
         """
@@ -103,7 +97,7 @@ class NonlinearSCI(nn.Module):
                 setattr(self, f"coeff_{i}", nn.Parameter(torch.randn(1)))
         for i in range(self.num_confounders):
             if self.confounder_type == "mlp":
-                setattr(self, f"mlp_confounder_{i}", MLP(self.confounder_size, len(self.confounder_hidden_dims),
+                setattr(self, f"mlp_confounder_{i}", MLP(self.confounder_dim, len(self.confounder_hidden_dims),
                                                          self.confounder_hidden_dims))
             else:
                 setattr(self, f"convnet_confounder_{i}", ConvNet(self.window_size, self.window_size, self.confounder_channels))
@@ -138,11 +132,16 @@ class NonlinearSCI(nn.Module):
         for i in range(self.num_interventions):
             interventions[i] = interventions[i] * getattr(self, f"coeff_{i}")
         for i in range(self.num_confounders):
-            confounders[i] = getattr(self, f"convnet_confounder_{i}")(confounders[i]).squeeze()
+            if self.confounder_type == "mlp":
+                confounders[i] = getattr(self, f"mlp_confounder_{i}")(confounders[i]).squeeze()
+            else:
+                confounders[i] = getattr(self, f"convnet_confounder_{i}")(confounders[i]).squeeze()
         for i in range(self.num_spatial_confounders):
             spatial_confounders[i] = getattr(self, f"convnet_spatial_confounder_{i}")(spatial_confounders[i]).squeeze()
         output = torch.sum(torch.stack(interventions + confounders + spatial_confounders), dim=0)
-        return output if not self.unobserved_confounder else output + self.gp_unobserved_confounder(s)
+        if len(s.shape) == 1:
+            s = s.unsqueeze(1)
+        return output if not self.unobserved_confounder else output + self.gp_unobserved_confounder([s])
     
     def freeze_coefficients(self) -> None:
         """
