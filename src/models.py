@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from typing import List
-from networks import MLP, ConvNet
+from nn import MLP, ConvNet
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
 
@@ -34,50 +34,41 @@ KERNEL_PARAMS = {
 class NonlinearSCI(nn.Module):
     """
     Defines the model for nonlinear spatial causal inference
+    y = beta_1 * T1 + ... + beta_m + Tm + f_1(T1_bar) + ... + f_m(Tm_bar) + g(X) + U + epsilon
+    where T is the intervention variable, T_bar is the neighboring interventions, X is the confounder,
+    U is the unobserved confounder, epsilon is the noise term, and m is the number of interventions.
+    Here both f and g are deep models, and U is modeled using the Implicit Composite Kernel (ICK).
 
     Arguments
     --------------
-    num_interventions: int, the total number of treatments
-    num_confounders: int, the total number of non-spatial confounders
-    num_spatial_confounders: int, the total number of spatial confounders
-    confounder_dim: int, the dimension of non-spatial confounders
-    window_size: int, grid size for spatial/non-spatial confounders
-    confounder_type: str, the model type for non-spatial confounders, default to "mlp"
-    confounder_hidden_dims: List[int], the dimensions of hidden layers for non-spatial confounders, default to [128,64]
-    confounder_channels: int, number of channels for non-spatial confounders, default to 1
-    spatial_confounder_channels: int, number of channels for spatial confounders, default to 1
-    unobserved_confounder: bool, whether to include an unobserved confounder
-    intervention_coeffs: List[int], the coefficients for each intervention, optional
-        if not provided, the coefficients will be randomly initialized from N(0,1)
-    **kwargs: dict, additional keyword arguments for the Implicit Composite Kernel (ICK) model
+    num_interventions: int, number of interventions
+    window_size: int, grid size for neighboring interventions T_bar
+    confounder_dim: int, dimension of the confounder X
+    f_network_type: str, the model type for f, default to "convnet"
+    g_network_type: str, the model type for g, default to "mlp"
+    unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
+    **kwargs: dict, additional keyword arguments for f, g, and U
+        arguments for f:
+        - f_channels: int, number of channels for the convolutional neural network for f, default to 1
+        arguments for g:
+        - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
+        - g_channels: int, number of channels for the convolutional neural network for g, default to 1
+        arguments for U:
         - kernel_func: str, the kernel function to use for the ICK model
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
-    def __init__(self, num_interventions: int, num_confounders: int, num_spatial_confounders: int, confounder_dim: int,
-                 window_size: int, confounder_type: str = "mlp", confounder_hidden_dims: List[int] = [128,64], 
-                 confounder_channels: int = 1, spatial_confounder_channels: int = 1, unobserved_confounder: bool = False, 
-                 intervention_coeffs: List[float] = None, **kwargs) -> None:
+    def __init__(self, num_interventions: int, window_size: int, confounder_dim: int, f_network_type: str = "convnet", 
+                 g_network_type: str = "mlp", unobserved_confounder: bool = False, **kwargs) -> None:
         super(NonlinearSCI, self).__init__()
         self.num_interventions: int = num_interventions
-        self.num_confounders: int = num_confounders
-        self.num_spatial_confounders: int = num_spatial_confounders
-        self.confounder_dim: int = confounder_dim
         self.window_size: int = window_size
-        self.confounder_type: str = confounder_type
-        self.confounder_hidden_dims: List[int] = confounder_hidden_dims
-        self.confounder_channels: int = confounder_channels
-        self.spatial_confounder_channels: int = spatial_confounder_channels
+        self.confounder_dim: int = confounder_dim
+        self.f_network_type: str = f_network_type
+        self.g_network_type: str = g_network_type
         self.unobserved_confounder: bool = unobserved_confounder
-        self.intervention_coeffs: List[float] = intervention_coeffs
         self.kwargs: dict = kwargs
-        self._validate_inputs()
         self._build_model()
-    
-    def _validate_inputs(self) -> None:
-        if self.intervention_coeffs is not None:
-            assert len(self.intervention_coeffs) == self.num_interventions, \
-                "Number of intervention coefficients must match number of interventions."
     
     def _build_model(self) -> None:
         """
@@ -90,19 +81,25 @@ class NonlinearSCI(nn.Module):
         Jiang, Ziyang, et al. "Incorporating prior knowledge into neural networks through an implicit 
         composite kernel." arXiv preprint arXiv:2205.07384 (2022).
         """
-        for i in range(self.num_interventions):
-            if self.intervention_coeffs:
-                setattr(self, f"coeff_{i}", nn.Parameter(torch.tensor(self.intervention_coeffs[i])))
-            else:
-                setattr(self, f"coeff_{i}", nn.Parameter(torch.randn(1)))
-        for i in range(self.num_confounders):
-            if self.confounder_type == "mlp":
-                setattr(self, f"mlp_confounder_{i}", MLP(self.confounder_dim, len(self.confounder_hidden_dims),
-                                                         self.confounder_hidden_dims))
-            else:
-                setattr(self, f"convnet_confounder_{i}", ConvNet(self.window_size, self.window_size, self.confounder_channels))
-        for i in range(self.num_spatial_confounders):
-            setattr(self, f"convnet_spatial_confounder_{i}", ConvNet(self.window_size, self.window_size, self.spatial_confounder_channels))
+        for i in range(1,self.num_interventions+1):
+            setattr(self, f"beta_{i}", nn.Parameter(torch.randn(1)))
+        # model for f(T_bar)
+        if self.f_network_type == "convnet":
+            f_channels = self.kwargs.get('f_channels', 1)
+            for i in range(1,self.num_interventions+1):
+                setattr(self, f"f_{i}", ConvNet(self.window_size, self.window_size, f_channels))
+        else:
+            raise Exception(f"Invalid network type for f: {self.f_network_type}")
+        # model for g(X)
+        if self.g_network_type == "mlp":
+            g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
+            self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims)
+        elif self.g_network_type == "convnet":
+            g_channels = self.kwargs.get('g_channels', 1)
+            self.g = ConvNet(self.window_size, self.window_size, g_channels)
+        else:
+            raise Exception(f"Invalid network type for g: {self.g_network_type}")
+        # model for U
         if self.unobserved_confounder:
             kernel_assignment = ['ImplicitNystromKernel']
             kernel_params = {
@@ -118,72 +115,32 @@ class NonlinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, x: List, s: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
         """
-        x: List, a list containing the interventions and confounders
+        t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
+            (batch_size, window_size, window_size)
+        x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
+            (batch_size, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
             of the training data, only used when unobserved_confounder is True
         """
-        assert len(x) == self.num_interventions + self.num_confounders + self.num_spatial_confounders, \
-            "Number of inputs must match number of interventions and confounders."
-        interventions = x[:self.num_interventions]
-        confounders = x[self.num_interventions:self.num_interventions+self.num_confounders]
-        spatial_confounders = x[self.num_interventions+self.num_confounders:]
+        y_t, y_t_bar, y_x = [], [], []
+        t_mask = torch.ones_like(t[0])
+        t_mask[:,self.window_size//2,self.window_size//2] = 0
         for i in range(self.num_interventions):
-            interventions[i] = interventions[i] * getattr(self, f"coeff_{i}")
-        for i in range(self.num_confounders):
-            if self.confounder_type == "mlp":
-                confounders[i] = getattr(self, f"mlp_confounder_{i}")(confounders[i]).squeeze()
-            else:
-                confounders[i] = getattr(self, f"convnet_confounder_{i}")(confounders[i]).squeeze()
-        for i in range(self.num_spatial_confounders):
-            spatial_confounders[i] = getattr(self, f"convnet_spatial_confounder_{i}")(spatial_confounders[i]).squeeze()
-        output = torch.sum(torch.stack(interventions + confounders + spatial_confounders), dim=0)
+            ti = t[i][:,self.window_size//2,self.window_size//2]
+            y_t.append(ti * getattr(self, f"beta_{i+1}"))
+            ti_bar = (t[i] * t_mask).unsqueeze(1)     # broadcasting
+            if self.f_network_type == "convnet":
+                y_t_bar.append(getattr(self, f"f_{i+1}")(ti_bar).squeeze())
+        if self.g_network_type == "mlp":
+            y_x.append(self.g(x).squeeze())
+        elif self.g_network_type == "convnet":
+            y_x.append(self.g(x.unsqueeze(1)).squeeze())
+        output = torch.sum(torch.stack(y_t + y_t_bar + y_x), dim=0)
         if len(s.shape) == 1:
             s = s.unsqueeze(1)
-        return output if not self.unobserved_confounder else output + self.gp_unobserved_confounder([s])
-    
-    def freeze_coefficients(self) -> None:
-        """
-        Freeze both the coefficients for interventions and the convolutional neural networks for confounders
-        """
-        for i in range(self.num_interventions):
-            getattr(self, f"coeff_{i}").requires_grad = False
-        for i in range(self.num_confounders):
-            for param in getattr(self, f"convnet_confounder_{i}").parameters():
-                param.requires_grad = False
-        for i in range(self.num_spatial_confounders):
-            for param in getattr(self, f"convnet_spatial_confounder_{i}").parameters():
-                param.requires_grad = False
-    
-    def unfreeze_coefficients(self) -> None:
-        """
-        Unfreeze both the coefficients for interventions and the convolutional neural networks for confounders
-        """
-        for i in range(self.num_interventions):
-            getattr(self, f"coeff_{i}").requires_grad = True
-        for i in range(self.num_confounders):
-            for param in getattr(self, f"convnet_confounder_{i}").parameters():
-                param.requires_grad = True
-        for i in range(self.num_spatial_confounders):
-            for param in getattr(self, f"convnet_spatial_confounder_{i}").parameters():
-                param.requires_grad = True
-    
-    def freeze_ick(self) -> None:
-        """
-        Freeze the ICK model for unobserved confounder
-        """
-        if self.unobserved_confounder:
-            for param in self.gp_unobserved_confounder.parameters():
-                param.requires_grad = False
-    
-    def unfreeze_ick(self) -> None:
-        """
-        Unfreeze the ICK model for unobserved confounder
-        """
-        if self.unobserved_confounder:
-            for param in self.gp_unobserved_confounder.parameters():
-                param.requires_grad = True
+        return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
         
 # ########################################################################################
 # MIT License

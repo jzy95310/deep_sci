@@ -72,14 +72,13 @@ class BaseTrainer(ABC):
         self._validate_inputs()
         self._set_optimizer()
     
-    def _assign_device_to_data(self, features: List, spatial_features: torch.Tensor, target: torch.Tensor) -> Tuple:
+    def _assign_device_to_data(self, t: List, x: torch.Tensor, s: torch.Tensor, y: torch.Tensor) -> Tuple:
         """
         Assign the device to the features and the target
         """
-        features = list(map(lambda x: x.to(self.device), features))
-        spatial_features = spatial_features.to(self.device)
-        target = target.to(self.device)
-        return features, spatial_features, target
+        t = list(map(lambda x: x.to(self.device), t))
+        x, s, y = x.to(self.device), s.to(self.device), y.to(self.device)
+        return t, x, s, y
     
     @abstractmethod
     def _validate_inputs(self) -> None:
@@ -148,21 +147,21 @@ class Trainer(BaseTrainer):
         y_train_pred = torch.empty(0).to(self.device)
         y_train_true = torch.empty(0).to(self.device)
         for step, batch in enumerate(self.data_generators[TRAIN]):
-            features, spatial_features, target = self._assign_device_to_data(*batch)
+            t, x, s, y = self._assign_device_to_data(*batch)
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
             if not self.model.unobserved_confounder:
-                y_pred = self.model(features).float()
+                y_pred = self.model(t, x).float()
             else:
-                y_pred = self.model(features, spatial_features).float()
-            loss = self.loss_fn(y_pred, target)
+                y_pred = self.model(t, x, s).float()
+            loss = self.loss_fn(y_pred, y.float())
             # Backward pass
             loss.backward()
             self.optimizer.step()
             # Record the predictions
             y_train_pred = torch.cat((y_train_pred, y_pred), dim=0)
-            y_train_true = torch.cat((y_train_true, target), dim=0)
+            y_train_true = torch.cat((y_train_true, y), dim=0)
         train_loss = self.loss_fn(y_train_pred, y_train_true).item()
         return train_loss, step
     
@@ -221,13 +220,13 @@ class Trainer(BaseTrainer):
 
         with torch.no_grad():
             for batch in self.data_generators[VAL]:
-                features, spatial_features, target = self._assign_device_to_data(*batch)
+                t, x, s, y = self._assign_device_to_data(*batch)
                 if not self.model.unobserved_confounder:
-                    y_pred = self.model(features).float()
+                    y_pred = self.model(t, x).float()
                 else:
-                    y_pred = self.model(features, spatial_features).float()
+                    y_pred = self.model(t, x, s).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
-                y_val_true = torch.cat((y_val_true, target), dim=0)
+                y_val_true = torch.cat((y_val_true, y), dim=0)
         val_loss = self.loss_fn(y_val_pred, y_val_true).item()
         return val_loss
     
@@ -241,13 +240,13 @@ class Trainer(BaseTrainer):
 
         with torch.no_grad():
             for batch in self.data_generators[TEST]:
-                features, spatial_features, target = self._assign_device_to_data(*batch)
+                t, x, s, y = self._assign_device_to_data(*batch)
                 if not self.model.unobserved_confounder:
-                    y_pred = self.model(features).float()
+                    y_pred = self.model(t, x).float()
                 else:
-                    y_pred = self.model(features, spatial_features).float()
+                    y_pred = self.model(t, x, s).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
-                y_test_true = torch.cat((y_test_true, target), dim=0)
+                y_test_true = torch.cat((y_test_true, y), dim=0)
         return y_test_pred.detach().cpu().numpy(), y_test_true.detach().cpu().numpy()
 
 # ########################################################################################

@@ -13,60 +13,65 @@ class SpatialDataset(Dataset):
 
     Arguments
     --------------
-    features: List[np.ndarray], A list of numpy arrays containing the gridded features for each sample
-    spatial_features: np.ndarray, A numpy array containing the spatial features for each sample
-    targets: List, A list of the targets for each sample
+    t: List[np.ndarray], A list of numpy arrays containing the interventions for each sample
+    x: np.ndarray, A numpy array containing the confounder for each sample
+    s: np.ndarray, A numpy array containing the spatial information for each sample
+    y: List, A list of the targets for each sample
     """
-    def __init__(self, features: List, spatial_features: np.ndarray, targets: np.ndarray) -> None:
-        self.features: List = features
-        self.spatial_features: np.ndarray = spatial_features
-        self.targets: np.ndarray = targets
+    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
+        self.t: List = t
+        self.x: np.ndarray = x
+        self.s: np.ndarray = s
+        self.y: np.ndarray = y
         self._validate_and_preprocess_inputs()
         
     def _validate_and_preprocess_inputs(self) -> None:
-        assert all([len(feat) == len(self.targets) for feat in self.features]), \
-            "Features and targets must be the same length"
-        assert len(self.spatial_features) == len(self.targets), \
+        assert all([len(feat) == len(self.y) for feat in self.t]), \
+            "Interventions and targets must be the same length"
+        assert len(self.x) == len(self.y), \
+            "Confounder and targets must be the same length"
+        assert len(self.s) == len(self.y), \
             "Spatial features and targets must be the same length"
     
     def __len__(self) -> int:
-        return len(self.targets)
+        return len(self.y)
     
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        return list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.features]), \
-            torch.from_numpy(self.spatial_features[idx]).float() if isinstance(self.spatial_features[idx], np.ndarray) else torch.tensor(self.spatial_features[idx]), \
-            torch.tensor(self.targets[idx]).float()
+        return list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.t]), \
+            torch.tensor(self.x[idx]).float() if isinstance(self.x[idx], np.ndarray) else torch.tensor(self.x[idx]), \
+            torch.from_numpy(self.s[idx]).float() if isinstance(self.s[idx], np.ndarray) else torch.tensor(self.s[idx]), \
+            torch.tensor(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx])
 
-def train_val_test_split(features: List, spatial_features: np.ndarray, targets: np.ndarray, train_size: float = 0.7,
+def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020) -> Tuple:
     """
     Splits the dataset into training, validation, and test sets
     If shuffle is set to True, the data will be shuffled before splitting
     """
     assert train_size + val_size + test_size == 1.0, "Train, validation, and test sizes must sum to 1"
-    assert all([len(feat) == len(targets) for feat in features]), "Features and targets must be the same length"
-    assert len(spatial_features) == len(targets), "Spatial features and targets must be the same length"
+    assert all([len(feat) == len(y) for feat in t]), "Interventions and targets must be the same length"
+    assert len(x) == len(y), "Confounder and targets must be the same length"
+    assert len(s) == len(y), "Spatial features and targets must be the same length"
 
     if shuffle:
         np.random.seed(random_state)
-        idx = np.random.permutation(len(targets))
-        features = [feat[idx] for feat in features]
-        spatial_features = spatial_features[idx]
-        targets = targets[idx]
+        idx = np.random.permutation(len(y))
+        t = [feat[idx] for feat in t]
+        x, s, y = x[idx], s[idx], y[idx]
     
-    train_idx = int(train_size * len(targets))
-    val_idx = int((train_size + val_size) * len(targets))
+    train_idx = int(train_size * len(y))
+    val_idx = int((train_size + val_size) * len(y))
 
-    train_features, train_spatial_features = [feat[:train_idx] for feat in features], spatial_features[:train_idx]
-    val_features, val_spatial_features = [feat[train_idx:val_idx] for feat in features], spatial_features[train_idx:val_idx]
-    test_features, test_spatial_features = [feat[val_idx:] for feat in features], spatial_features[val_idx:]
-    train_targets, val_targets, test_targets = targets[:train_idx], targets[train_idx:val_idx], targets[val_idx:]
+    t_train, x_train, s_train = [feat[:train_idx] for feat in t], x[:train_idx], s[:train_idx]
+    t_val, x_val, s_val = [feat[train_idx:val_idx] for feat in t], x[train_idx:val_idx], s[train_idx:val_idx]
+    t_test, x_test, s_test = [feat[val_idx:] for feat in t], x[val_idx:], s[val_idx:]
+    y_train, y_val, y_test = y[:train_idx], y[train_idx:val_idx], y[val_idx:]
 
-    return SpatialDataset(train_features, train_spatial_features, train_targets), \
-        SpatialDataset(val_features, val_spatial_features, val_targets), \
-        SpatialDataset(test_features, test_spatial_features, test_targets)
+    return SpatialDataset(t_train, x_train, s_train, y_train), \
+        SpatialDataset(t_val, x_val, s_val, y_val), \
+        SpatialDataset(t_test, x_test, s_test, y_test)
 
 # ########################################################################################
 # MIT License
