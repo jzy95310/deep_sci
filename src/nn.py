@@ -24,6 +24,42 @@ ACTIVATIONS = {
     "erf": Erf(),
 }
 
+class DeepKrigingEmbedding1D(nn.Module):
+    """
+    One-dimensional embedding layer for DeepKriging
+    Maps spatial information into basis functions using Wendland kernel
+
+    Arguments
+    --------------
+    K: int, the basis size
+    """
+    def __init__(self, K: int):
+        super(DeepKrigingEmbedding1D, self).__init__()
+        self.K = K
+        self.num_basis = [9*2**(h-1)+1 for h in range(1,self.K+1)]
+    
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        """
+        s: torch.Tensor, shape (N,) or (N,1), the spatial information
+        """
+        if len(s.shape) == 1:
+            s = s.unsqueeze(1)
+        knots = [torch.linspace(0,1,i) for i in self.num_basis]
+        ##Wendland kernel
+        N, K = s.shape[0], 0 ## basis size
+        phi = torch.zeros(N, sum(self.num_basis))
+        for res in range(len(self.num_basis)):
+            theta = 1/self.num_basis[res]*2.5
+            for i in range(self.num_basis[res]):
+                d = torch.abs(s-knots[res][i])/theta
+                for j in range(len(d)):
+                    if d[j] >= 0 and d[j] <= 1:
+                        phi[j,i + K] = (1-d[j])**6 * (35 * d[j]**2 + 18 * d[j] + 3)/3
+                    else:
+                        phi[j,i + K] = 0
+            K = K + self.num_basis[res]
+        return phi
+
 class MLP(nn.Module):
     """
     Defines a multi-layer perceptron
@@ -81,6 +117,7 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mlp_layers(x)
 
+
 class ConvNet(nn.Module):
     """
     Defines a convolutional neural network for processing spatial confounders
@@ -93,13 +130,14 @@ class ConvNet(nn.Module):
     kernel_size: int, the initial kernel size of each convolutional layer, default to 7
     stride: int, the initial stride of each convolutional layer, default to 3
     intermediate_channels: int, the maximum number of channels in the convolutional layers, default to 64
+    dense_hidden_dim: int or list of int, the dimension of hidden layers after convolutional layers, default to 128
     batch_norm: bool, whether to use batch normalization in each convolutional block, default to False
     p_dropout: float, the dropout probability, default to 0.0
     activation: str, the activation function to use, default to "tanh"
     """
     def __init__(self, input_width: int, input_height: int, num_channels: int = 1, kernel_size: int = 7, 
-                 stride: int = 3, intermediate_channels: int = 64, batch_norm: bool = False, p_dropout: float = 0.0, 
-                 activation: str = "tanh") -> None:
+                 stride: int = 3, intermediate_channels: int = 64, dense_hidden_dim: int = 128, batch_norm: bool = False, 
+                 p_dropout: float = 0.0, activation: str = "tanh") -> None:
         super(ConvNet, self).__init__()
         self.input_width: int = input_width
         self.input_height: int = input_height
@@ -107,6 +145,7 @@ class ConvNet(nn.Module):
         self.kernel_size: int = kernel_size
         self.stride: int = stride
         self.intermediate_channels: int = intermediate_channels
+        self.dense_hidden_dim: int = dense_hidden_dim
         self.batch_norm: bool = batch_norm
         self.p_dropout: float = p_dropout
         self.activation: str = activation
@@ -123,31 +162,117 @@ class ConvNet(nn.Module):
         Build the convolutional layers. The stride will be decremented by 1 for each layer, and
         the kernel size will be decremented by 2 for each layer. 
         """
-        layers = []
+        conv_layers, dense_layers = [], []
         kernel_size, stride = self.kernel_size, self.stride
         input_width, input_height = self.input_width, self.input_height
         while kernel_size < min(input_width, input_height):
-            if not layers:
-                layers.append(nn.Conv2d(self.num_channels, self.intermediate_channels, kernel_size, stride))
+            if not conv_layers:
+                conv_layers.append(nn.Conv2d(self.num_channels, self.intermediate_channels, kernel_size, stride))
             else:
-                layers.append(nn.Conv2d(self.intermediate_channels, self.intermediate_channels, kernel_size, stride))
+                conv_layers.append(nn.Conv2d(self.intermediate_channels, self.intermediate_channels, kernel_size, stride))
             if self.batch_norm:
-                layers.append(nn.BatchNorm2d(self.intermediate_channels))
-            layers.append(ACTIVATIONS[self.activation])
+                conv_layers.append(nn.BatchNorm2d(self.intermediate_channels))
+            conv_layers.append(ACTIVATIONS[self.activation])
             if self.p_dropout > 0:
-                layers.append(nn.Dropout2d(self.p_dropout))
+                conv_layers.append(nn.Dropout2d(self.p_dropout))
             input_width = (input_width - kernel_size) // stride + 1
             input_height = (input_height - kernel_size) // stride + 1
             if kernel_size > 3:
                 kernel_size -= 2
             if stride > 2:
                 stride -= 1
-        layers.append(nn.Flatten())
-        layers.append(nn.Linear(input_width * input_height * self.intermediate_channels, 1))
-        self.conv_layers = nn.Sequential(*layers)
+        conv_layers.append(nn.Flatten())
+        dense_layers.append(nn.Linear(input_width * input_height * self.intermediate_channels, self.dense_hidden_dim))
+        dense_layers.append(ACTIVATIONS[self.activation])
+        if self.p_dropout > 0:
+            dense_layers.append(nn.Dropout(self.p_dropout))
+        dense_layers.append(nn.Linear(self.dense_hidden_dim, 1))
+        self.conv_layers = nn.Sequential(*conv_layers)
+        self.dense_layers = nn.Sequential(*dense_layers)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv_layers(x)
+        return self.dense_layers(self.conv_layers(x))
+
+
+class DeepKrigingMLP(MLP):
+    """
+    Defines a DeepKriging model with MLP as the backbone
+
+    Arguments
+    --------------
+    input_dim: int, the dimension of input tensor
+    num_hidden_layers: int, the number of hidden layers
+    hidden_dims: int or list of int, the dimensions of hidden layers
+    K: int, the basis size, default to 4
+    batch_norm: bool, whether to use batch normalization in each hidden layer, default to False
+    p_dropout: float, the dropout probability, default to 0.0
+    activation: str, the activation function to use, default to "relu"
+    """
+    def __init__(self, input_dim: int, num_hidden_layers: int, hidden_dims: Union[int, List[int]], K: int = 4,
+                 batch_norm: bool = False, p_dropout: float = 0.0, activation: str = "relu") -> None:
+        self.K: int = K
+        super(DeepKrigingMLP, self).__init__(input_dim, num_hidden_layers, hidden_dims, batch_norm, 
+                                             p_dropout, activation)
+        self._build_layers()
+    
+    def _build_layers(self) -> None:
+        super(DeepKrigingMLP, self)._build_layers()
+        self.embedding = DeepKrigingEmbedding1D(self.K)
+        out_feature = self.hidden_dims[0] if isinstance(self.hidden_dims, List) else self.hidden_dims
+        self.mlp_layers[0] = nn.Linear(
+            self.mlp_layers[0].in_features + sum(self.embedding.num_basis), out_feature
+        )
+    
+    def forward(self, x: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+        """
+        x: torch.Tensor, shape (N, D), the input tensor
+        s: torch.Tensor, shape (N,) or (N,1), the spatial information
+        """
+        phi = self.embedding(s)
+        return self.mlp_layers(torch.cat([x, phi], dim=1))
+
+
+class DeepKrigingConvNet(ConvNet):
+    """
+    Defines a DeepKriging model with CNN as the backbone
+
+    Arguments
+    --------------
+    input_width: int, the width of input tensor
+    input_height: int, the height of input tensor
+    K: int, the basis size, default to 4
+    num_channels: int, number of input channels, default to 1
+    kernel_size: int, the initial kernel size of each convolutional layer, default to 7
+    stride: int, the initial stride of each convolutional layer, default to 3
+    intermediate_channels: int, the maximum number of channels in the convolutional layers, default to 64
+    batch_norm: bool, whether to use batch normalization in each convolutional block, default to False
+    p_dropout: float, the dropout probability, default to 0.0
+    activation: str, the activation function to use, default to "tanh"
+    """
+    def __init__(self, input_width: int, input_height: int, K: int = 4, num_channels: int = 1, kernel_size: int = 7, 
+                 stride: int = 3, intermediate_channels: int = 64, dense_hidden_dim: int = 128, batch_norm: bool = False, 
+                 p_dropout: float = 0.0, activation: str = "tanh") -> None:
+        self.K: int = K
+        super(DeepKrigingConvNet, self).__init__(input_width, input_height, num_channels, kernel_size, stride, 
+                                                 intermediate_channels, dense_hidden_dim, batch_norm, p_dropout, 
+                                                 activation)
+        self._build_layers()
+    
+    def _build_layers(self) -> None:
+        super(DeepKrigingConvNet, self)._build_layers()
+        self.embedding = DeepKrigingEmbedding1D(self.K)
+        self.dense_layers[0] = nn.Linear(
+            self.dense_layers[0].in_features + sum(self.embedding.num_basis), self.dense_hidden_dim
+        )
+    
+    def forward(self, x: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+        """
+        x: torch.Tensor, shape (N, C, H, W), the input tensor
+        s: torch.Tensor, shape (N,) or (N,1), the spatial information
+        """
+        phi = self.embedding(s)
+        return self.dense_layers(torch.cat([self.conv_layers(x), phi], dim=1))
+
 
 # ########################################################################################
 # MIT License
