@@ -17,12 +17,14 @@ class SpatialDataset(Dataset):
     x: np.ndarray, A numpy array containing the confounder for each sample
     s: np.ndarray, A numpy array containing the spatial information for each sample
     y: List, A list of the targets for each sample
+    w: List, A list of numpy arrays containing the weights for neighboring interventions, default None
     """
-    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
+    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w: List = None) -> None:
         self.t: List = t
         self.x: np.ndarray = x
         self.s: np.ndarray = s
         self.y: np.ndarray = y
+        self.w: np.ndarray = w
         self._validate_and_preprocess_inputs()
         
     def _validate_and_preprocess_inputs(self) -> None:
@@ -32,6 +34,9 @@ class SpatialDataset(Dataset):
             "Confounder and targets must be the same length"
         assert len(self.s) == len(self.y), \
             "Spatial features and targets must be the same length"
+        if self.w is not None:
+            assert self.t[0].shape == self.w[0].shape, \
+                "Intervention and weight must be the same shape"
     
     def __len__(self) -> int:
         return len(self.y)
@@ -39,12 +44,16 @@ class SpatialDataset(Dataset):
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        return list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.t]), \
-            torch.tensor(self.x[idx]).float() if isinstance(self.x[idx], np.ndarray) else torch.tensor(self.x[idx]), \
+        batch = list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.t]), \
+            torch.from_numpy(self.x[idx]).float() if isinstance(self.x[idx], np.ndarray) else torch.tensor(self.x[idx]), \
             torch.from_numpy(self.s[idx]).float() if isinstance(self.s[idx], np.ndarray) else torch.tensor(self.s[idx]), \
-            torch.tensor(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx])
+            torch.from_numpy(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx])
+        if self.w is not None:
+            # Attach the list of weights to the batch
+            batch += ([torch.from_numpy(weights[idx]).float() if isinstance(weights[idx], np.ndarray) else torch.tensor(weights[idx]).float() for weights in self.w],)
+        return batch
 
-def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
+def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w: List = None, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020) -> Tuple:
     """
     Splits the dataset into training, validation, and test sets
@@ -60,6 +69,8 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, t
         idx = np.random.permutation(len(y))
         t = [feat[idx] for feat in t]
         x, s, y = x[idx], s[idx], y[idx]
+        if w is not None:
+            w = [weights[idx] for weights in w]
     
     train_idx = int(train_size * len(y))
     val_idx = int((train_size + val_size) * len(y))
@@ -69,9 +80,17 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, t
     t_test, x_test, s_test = [feat[val_idx:] for feat in t], x[val_idx:], s[val_idx:]
     y_train, y_val, y_test = y[:train_idx], y[train_idx:val_idx], y[val_idx:]
 
-    return SpatialDataset(t_train, x_train, s_train, y_train), \
-        SpatialDataset(t_val, x_val, s_val, y_val), \
-        SpatialDataset(t_test, x_test, s_test, y_test)
+    if w is not None:
+        w_train = [weights[:train_idx] for weights in w]
+        w_val = [weights[train_idx:val_idx] for weights in w]
+        w_test = [weights[val_idx:] for weights in w]
+        return SpatialDataset(t_train, x_train, s_train, y_train, w_train), \
+            SpatialDataset(t_val, x_val, s_val, y_val, w_val), \
+            SpatialDataset(t_test, x_test, s_test, y_test, w_test)
+    else:
+        return SpatialDataset(t_train, x_train, s_train, y_train), \
+            SpatialDataset(t_val, x_val, s_val, y_val), \
+            SpatialDataset(t_test, x_test, s_test, y_test)
 
 # ########################################################################################
 # MIT License

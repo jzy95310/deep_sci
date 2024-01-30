@@ -8,7 +8,7 @@ import time
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple
-from models import NonlinearSCI
+from models import LinearSCI, NonlinearSCI
 
 TRAIN = 'train'
 VAL = 'val'
@@ -50,7 +50,8 @@ class BaseTrainer(ABC):
     def __init__(self, model: torch.nn.Module, data_generators: Dict, optim: str, optim_params: Dict,
                  lr_scheduler: torch.optim.lr_scheduler._LRScheduler = None, model_save_dir: str = None, model_name: str = 'model.pt', 
                  loss_fn: torch.nn.modules.loss._Loss = torch.nn.MSELoss(), device: torch.device = torch.device('cpu'), 
-                 epochs: int = 100, patience: int = 10, logger: logging.Logger = logging.getLogger("Trainer")) -> None:
+                 epochs: int = 100, patience: int = 10, logger: logging.Logger = logging.getLogger("Trainer"), 
+                 wandb: object = None) -> None:
         self.model: torch.nn.Module = model
         self.data_generators: Dict = data_generators
         self.optim: str = optim
@@ -64,21 +65,28 @@ class BaseTrainer(ABC):
         self.patience: int = patience
         self.logger: logging.Logger = logger
         self.logger.setLevel(logging.INFO)
+        self.wandb: object = wandb
         if self.logger.hasHandlers():
             self.logger.handlers.clear()
         self.logger.addHandler(logging.StreamHandler(stream=sys.stdout))
         if self.model_save_dir is not None and not os.path.exists(self.model_save_dir):
             os.makedirs(self.model_save_dir)
+        self._register_wandb_params()
         self._validate_inputs()
         self._set_optimizer()
     
-    def _assign_device_to_data(self, t: List, x: torch.Tensor, s: torch.Tensor, y: torch.Tensor) -> Tuple:
+    def _assign_device_to_data(self, t: List, x: torch.Tensor, s: torch.Tensor, y: torch.Tensor, 
+                               w: List = None) -> Tuple:
         """
         Assign the device to the features and the target
         """
         t = list(map(lambda x: x.to(self.device), t))
         x, s, y = x.to(self.device), s.to(self.device), y.to(self.device)
-        return t, x, s, y
+        if w is not None:
+            w = list(map(lambda x: x.to(self.device), w))
+            return t, x, s, y, w
+        else:
+            return t, x, s, y
     
     @abstractmethod
     def _validate_inputs(self) -> None:
@@ -106,6 +114,19 @@ class BaseTrainer(ABC):
         """
         self.optimizer = OPTIMIZERS[self.optim](self.model.parameters(), **self.optim_params)
     
+    def _register_wandb_params(self) -> None:
+        """
+        Register the parameters for wandb
+        """
+        if self.wandb is not None:
+            self.wandb.config.update({
+                "optimizer": self.optim,
+                "optimizer_params": self.optim_params,
+                "loss_fn": self.loss_fn,
+                "epochs": self.epochs,
+                "patience": self.patience
+            }, allow_val_change=True)
+    
     @abstractmethod
     def train(self) -> None:
         """
@@ -127,15 +148,16 @@ class Trainer(BaseTrainer):
     def __init__(self, model: torch.nn.Module, data_generators: Dict, optim: str, optim_params: Dict,
                  lr_scheduler: torch.optim.lr_scheduler._LRScheduler = None, model_save_dir: str = None, model_name: str = 'model.pt', 
                  loss_fn: torch.nn.modules.loss._Loss = torch.nn.MSELoss(), device: torch.device = torch.device('cpu'), 
-                 epochs: int = 100, patience: int = 10, logger: logging.Logger = logging.getLogger("Trainer")) -> None:
+                 epochs: int = 100, patience: int = 10, logger: logging.Logger = logging.getLogger("Trainer"), 
+                 wandb: object = None) -> None:
         super(Trainer, self).__init__(model, data_generators, optim, optim_params, lr_scheduler, model_save_dir, model_name, 
-                                      loss_fn, device, epochs, patience, logger)
+                                      loss_fn, device, epochs, patience, logger, wandb)
         self._validate_inputs()
         self._set_optimizer()
     
     def _validate_inputs(self) -> None:
-        if not isinstance(self.model, NonlinearSCI):
-            raise TypeError("model must be an instance of NonlinearSCI class.")
+        if not isinstance(self.model, (LinearSCI, NonlinearSCI)):
+            raise TypeError("model must be an instance of LinearSCI or NonlinearSCI.")
         super(Trainer, self)._validate_inputs()
     
     def _train_step(self) -> Tuple:
@@ -147,14 +169,27 @@ class Trainer(BaseTrainer):
         y_train_pred = torch.empty(0).to(self.device)
         y_train_true = torch.empty(0).to(self.device)
         for step, batch in enumerate(self.data_generators[TRAIN]):
-            t, x, s, y = self._assign_device_to_data(*batch)
+            samples = self._assign_device_to_data(*batch)
+            t, x, s, y = samples[0], samples[1], samples[2], samples[3].squeeze()
+            if isinstance(self.model, LinearSCI):
+                try:
+                    w = samples[4]
+                except IndexError:
+                    raise IndexError("The weight must be provided for the linear model.")
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
             if not self.model.unobserved_confounder:
-                y_pred = self.model(t, x).float()
+                if isinstance(self.model, LinearSCI):
+                    y_pred = self.model(t, x, w).float()
+                else:
+                    y_pred = self.model(t, x).float()
             else:
-                y_pred = self.model(t, x, s).float()
+                if isinstance(self.model, LinearSCI):
+                    y_pred = self.model(t, x, w, s).float()
+                else:
+                    y_pred = self.model(t, x, s).float()
+            assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
             loss = self.loss_fn(y_pred, y.float())
             # Backward pass
             loss.backward()
@@ -187,6 +222,8 @@ class Trainer(BaseTrainer):
             val_loss = self.validate()
             val_time = time.time() - val_start
             self.logger.info("{:.0f}s - loss {:.4f}\n".format(val_time, val_loss))
+            if self.wandb is not None:
+                self.wandb.log({"train_loss": train_loss, "validation_loss": val_loss})
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
             # Early stopping
@@ -220,34 +257,82 @@ class Trainer(BaseTrainer):
 
         with torch.no_grad():
             for batch in self.data_generators[VAL]:
-                t, x, s, y = self._assign_device_to_data(*batch)
+                samples = self._assign_device_to_data(*batch)
+                t, x, s, y = samples[0], samples[1], samples[2], samples[3].squeeze()
+                if isinstance(self.model, LinearSCI):
+                    try:
+                        w = samples[4]
+                    except IndexError:
+                        raise IndexError("The weight must be provided for the linear model.")
                 if not self.model.unobserved_confounder:
-                    y_pred = self.model(t, x).float()
+                    if isinstance(self.model, LinearSCI):
+                        y_pred = self.model(t, x, w).float()
+                    else:
+                        y_pred = self.model(t, x).float()
                 else:
-                    y_pred = self.model(t, x, s).float()
+                    if isinstance(self.model, LinearSCI):
+                        y_pred = self.model(t, x, w, s).float()
+                    else:
+                        y_pred = self.model(t, x, s).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
                 y_val_true = torch.cat((y_val_true, y), dim=0)
+        assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
         val_loss = self.loss_fn(y_val_pred, y_val_true).item()
         return val_loss
     
-    def predict(self) -> None:
+    def predict(self, window_size: int, direct: bool, indirect: bool, t_idx: int = 0) -> None:
         """
         Evaluate the model on the test data
+
+        Arguments
+        --------------
+        window_size: int, the window size (area of interest) for the intervention
+        direct: bool, whether to include the direct effect of intervention in the prediction
+        indirect: bool, whether to include the indirect effect of neighboring interventions 
+            in the prediction
+        t_idx: int, the index of the intervention to use for prediction
         """
         y_test_pred = torch.empty(0).to(self.device)
-        y_test_true = torch.empty(0).to(self.device)
         self.model.eval()
 
         with torch.no_grad():
             for batch in self.data_generators[TEST]:
-                t, x, s, y = self._assign_device_to_data(*batch)
+                samples = self._assign_device_to_data(*batch)
+                t, x, s, _ = samples[0], samples[1], samples[2], samples[3].squeeze()
+                if isinstance(self.model, LinearSCI):
+                    try:
+                        w = samples[4]
+                    except IndexError:
+                        raise IndexError("The weight must be provided for the linear model.")
+                if not indirect:
+                    tmp = t[t_idx].clone()
+                    if len(t[t_idx].shape) == 2:
+                        t[t_idx] = torch.zeros_like(t[t_idx])
+                        t[t_idx][:,window_size//2] = tmp[:,window_size//2]
+                    elif len(t[t_idx].shape) == 3:
+                        t[t_idx] = torch.zeros_like(t[t_idx])
+                        t[t_idx][:,window_size//2,window_size//2] = tmp[:,window_size//2,window_size//2]
+                    else:
+                        raise ValueError(f"Intervention shape {t.shape} not supported.")
+                if not direct:
+                    if len(t[t_idx].shape) == 2:
+                        t[t_idx][:,window_size//2] = 0.
+                    elif len(t[t_idx].shape) == 3:
+                        t[t_idx][:,window_size//2,window_size//2] = 0.
+                    else:
+                        raise ValueError(f"Intervention shape {t.shape} not supported.")
                 if not self.model.unobserved_confounder:
-                    y_pred = self.model(t, x).float()
+                    if isinstance(self.model, LinearSCI):
+                        y_pred = self.model(t, x, w).float()
+                    else:
+                        y_pred = self.model(t, x).float()
                 else:
-                    y_pred = self.model(t, x, s).float()
+                    if isinstance(self.model, LinearSCI):
+                        y_pred = self.model(t, x, w, s).float()
+                    else:
+                        y_pred = self.model(t, x, s).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
-                y_test_true = torch.cat((y_test_true, y), dim=0)
-        return y_test_pred.detach().cpu().numpy(), y_test_true.detach().cpu().numpy()
+        return y_test_pred.detach().cpu().numpy()
 
 # ########################################################################################
 # MIT License
