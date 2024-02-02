@@ -26,7 +26,7 @@ class SpatialDataset:
           windoow_size: the size of the window around the center to consider
           num_samples: the total number of samples to generate for the dataset
           seed: the random seed to use for the dataset
-          
+          len_scale: the length scale to use for the weight matrix
         """
 
         # Load NLCD, NDVI, and unobserved confounder
@@ -46,7 +46,7 @@ class SpatialDataset:
         assert nlcd.shape == U.shape
 
         # This line converts NLCD to a percentage representation
-        # of the land cover class in the image
+        # of the land cover class in the window 
         self.nlcd = self._create_one_hot_encoding(nlcd)
         self.ndvi = ndvi
         self.U = U
@@ -64,18 +64,26 @@ class SpatialDataset:
         self.wm = self._calc_weight_matrix(window_size, len_scale)
 
         # Lastly, generate the coefficients
+        # A random number is generated for the confounding coefficient
         self.de_coef = 5
         self.confound_coef = np.random.uniform(0, 1, size=self.nlcd.shape[2])
 
 
     def _create_random_function(self, seed):
+        """
+        This function generates a random function. The weight matrix is multiplied with 
+        the neighboring cells, and then that output is passed through this function.
+
+        The result is a non-linear indirect effect.
+        """
         x = np.linspace(0, 1, 10)
 
         y = np.random.multivariate_normal(3*x, 0.5*np.eye(10), 1)
         y = np.sort(y)
         y = y.reshape(-1, 1)
 
-        # Now, we are going to create a cubic spline as the function
+        # Now, we arblob:vscode-webview://1ef1mbmj3fe0tko2c05m83hk4q75uf0hdhelglsnnj462nujcjah/3b4462e0-5ceb-4474-a4b3-21edca62c990e going to create a cubic spline as the function
+        # This allows the random points to be converted to a smooth function
         cs = CubicSpline(x, y)
 
         return cs
@@ -114,7 +122,6 @@ class SpatialDataset:
         ndvi_center = ndvi_window[self.window_size, self.window_size]
 
         # Run the ndvi_window through the random function
-        # TODO: figure out what function to apply to the ndvi window
         indirect_effect = self.response(
             np.sum(self.wm * ndvi_window)
         )[0]
@@ -169,6 +176,9 @@ class SpatialDataset:
         return weight
 
     def _calc_weight_matrix(self, window_size, length_scale):
+        """
+        This function calculates the weight matrix for the given window size.
+        """
         dist_matrix = np.sqrt(
             np.arange(-window_size, window_size + 1)[np.newaxis, :] ** 2
             + np.arange(-window_size, window_size + 1)[:, np.newaxis] ** 2
@@ -178,6 +188,11 @@ class SpatialDataset:
         return weight_matrix
 
     def _calc_nlcd_percentage(self, nlcd, window_size):
+        """
+        This function calculates the percentage of each land cover class
+        in the window provided, and returns the percentage of each class
+        as an array. 
+        """
         one_hot = self._create_one_hot_encoding(nlcd)
 
         weight_matrix = np.ones((window_size * 2 + 1, window_size * 2 + 1))
