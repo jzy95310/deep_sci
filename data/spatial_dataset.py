@@ -65,7 +65,7 @@ class SpatialDataset:
 
         # Lastly, generate the coefficients
         # A random number is generated for the confounding coefficient
-        self.de_coef = 5
+        self.de_coef = -4
         self.confound_coef = np.random.uniform(0, 1, size=self.nlcd.shape[2])
 
 
@@ -78,8 +78,8 @@ class SpatialDataset:
         """
         x = np.linspace(0, 1, 10)
 
-        y = np.random.multivariate_normal(3*x, 0.5*np.eye(10), 1)
-        y = np.sort(y)
+        y = np.random.multivariate_normal(0.4-3*x, 0.5*np.eye(10), 1)
+        # y = np.sort(y)
         y = y.reshape(-1, 1)
 
         # Now, we arblob:vscode-webview://1ef1mbmj3fe0tko2c05m83hk4q75uf0hdhelglsnnj462nujcjah/3b4462e0-5ceb-4474-a4b3-21edca62c990e going to create a cubic spline as the function
