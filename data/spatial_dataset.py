@@ -155,8 +155,24 @@ class SpatialDataset:
 
         temp = self.calc_temp(ndvi, nlcd, U)
         
+        # Create the counterfactuals
+
+        # Counterfactual where only center NDVI is 0
+        ndvi_01 = ndvi.copy()
+        ndvi_01[self.window_size, self.window_size] = 0
+        temp_01 = self.calc_temp(ndvi_01, nlcd, U)
+
+        # Counterfactual where only center NDVI is non-zero
+        ndvi_10 = np.zeros_like(ndvi)
+        ndvi_10[self.window_size, self.window_size] = ndvi[self.window_size, self.window_size]
+        temp_10 = self.calc_temp(ndvi_10, nlcd, U)
+
+        # Counterfactual where NDVI is all 0
+        ndvi_00 = np.zeros_like(ndvi)
+        temp_00 = self.calc_temp(ndvi_00, nlcd, U)
+        
         # Notably, we won't return U, since it is unobserved
-        return i, j, nlcd, ndvi, temp
+        return i, j, nlcd, ndvi, temp, temp_01, temp_10, temp_00
 
     def _create_one_hot_encoding(self, nlcd):
         # Creating the spatially aggregated one-hot encoding
