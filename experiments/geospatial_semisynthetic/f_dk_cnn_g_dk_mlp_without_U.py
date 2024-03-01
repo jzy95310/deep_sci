@@ -49,7 +49,9 @@ def main(args):
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="dk_convnet", 
+        f_kernel_size=3,
         g_network_type="dk_mlp", 
+        g_hidden_dims=[128],
         unobserved_confounder=False
     )
     

@@ -154,17 +154,18 @@ class NonlinearSCI(nn.Module):
     num_interventions: int, number of interventions
     window_size: int, grid size for neighboring interventions T_bar
     confounder_dim: int, dimension of the confounder X
-    s_dim: int, dimension of the spatial information, default to 1
     f_network_type: str, the model type for f, default to "convnet"
     g_network_type: str, the model type for g, default to "mlp"
     unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
     **kwargs: dict, additional keyword arguments for f, g, and U
         arguments for f:
         - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
+        - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
         - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
         - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
         arguments for g:
         - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
+        - g_kernel_size: int, the kernel size for the convolutional neural network for g, default to 7
         - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
         - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
         arguments for U:
@@ -204,13 +205,15 @@ class NonlinearSCI(nn.Module):
                 setattr(self, f"f_{i}", MLP(self.window_size, len(f_hidden_dims), f_hidden_dims))
         elif self.f_network_type == "convnet":
             f_channels = self.kwargs.get('f_channels', 1)
+            f_kernel_size = self.kwargs.get('f_kernel_size', 7)
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", ConvNet(self.window_size, self.window_size, f_channels))
+                setattr(self, f"f_{i}", ConvNet(self.window_size, self.window_size, f_channels, f_kernel_size))
         elif self.f_network_type == "dk_convnet":
             f_channels = self.kwargs.get('f_channels', 1)
+            f_kernel_size = self.kwargs.get('f_kernel_size', 7)
             f_num_basis = self.kwargs.get('f_num_basis', 4)
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", DeepKrigingConvNet(self.window_size, self.window_size, f_num_basis, f_channels))
+                setattr(self, f"f_{i}", DeepKrigingConvNet(self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size))
         else:
             raise Exception(f"Invalid network type for f: {self.f_network_type}")
         # model for g(X)
@@ -219,15 +222,17 @@ class NonlinearSCI(nn.Module):
             self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims)
         elif self.g_network_type == "convnet":
             g_channels = self.kwargs.get('g_channels', 1)
-            self.g = ConvNet(self.window_size, self.window_size, g_channels)
+            g_kernel_size = self.kwargs.get('g_kernel_size', 7)
+            self.g = ConvNet(self.window_size, self.window_size, g_channels, g_kernel_size)
         elif self.g_network_type == "dk_mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
             g_num_basis = self.kwargs.get('g_num_basis', 4)
             self.g = DeepKrigingMLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, g_num_basis)
         elif self.g_network_type == "dk_convnet":
             g_channels = self.kwargs.get('g_channels', 1)
+            g_kernel_size = self.kwargs.get('g_kernel_size', 7)
             g_num_basis = self.kwargs.get('g_num_basis', 4)
-            self.g = DeepKrigingConvNet(self.window_size, self.window_size, g_num_basis, g_channels)
+            self.g = DeepKrigingConvNet(self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size)
         else:
             raise Exception(f"Invalid network type for g: {self.g_network_type}")
         # model for U

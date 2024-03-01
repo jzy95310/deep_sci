@@ -310,16 +310,10 @@ class Trainer(BaseTrainer):
                         t[t_idx][:,window_size//2,window_size//2] = 0.
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
-                if not self.model.unobserved_confounder:
-                    if isinstance(self.model, LinearSCI):
-                        y_pred = self.model(t, x, w).float()
-                    else:
-                        y_pred = self.model(t, x).float()
+                if isinstance(self.model, LinearSCI):
+                    y_pred = self.model(t, x, w, s).float()
                 else:
-                    if isinstance(self.model, LinearSCI):
-                        y_pred = self.model(t, x, w, s).float()
-                    else:
-                        y_pred = self.model(t, x, s).float()
+                    y_pred = self.model(t, x, s).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
         return y_test_pred.detach().cpu().numpy()
 
