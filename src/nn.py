@@ -3,6 +3,7 @@
 
 import torch
 from torch import nn
+import numpy as np
 from typing import List, Union
 
 class Erf(nn.Module):
@@ -24,41 +25,37 @@ ACTIVATIONS = {
     "erf": Erf(),
 }
 
-class DeepKrigingEmbedding1D(nn.Module):
-    """
-    One-dimensional embedding layer for DeepKriging
-    Maps spatial information into basis functions using Wendland kernel
 
-    Arguments
-    --------------
-    K: int, the basis size
+class DeepKrigingEmbedding2D(nn.Module):
+    """
+    Two-dimensional embedding layer for DeepKriging
     """
     def __init__(self, K: int):
-        super(DeepKrigingEmbedding1D, self).__init__()
+        super(DeepKrigingEmbedding2D, self).__init__()
         self.K = K
-        self.num_basis = [9*2**(h-1)+1 for h in range(1,self.K+1)]
+        self.num_basis = [(9*2**(h-1)+1)**2 for h in range(1,self.K+1)]
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
-        s: torch.Tensor, shape (N,) or (N,1), the spatial information
+        s: torch.Tensor, shape (N,2), the spatial information
         """
-        if len(s.shape) == 1:
-            s = s.unsqueeze(1)
-        knots = [torch.linspace(0,1,i) for i in self.num_basis]
-        ##Wendland kernel
-        N, K = s.shape[0], 0 ## basis size
-        phi = torch.zeros(N, sum(self.num_basis))
-        for res in range(len(self.num_basis)):
-            theta = 1/self.num_basis[res]*2.5
-            for i in range(self.num_basis[res]):
-                d = torch.abs(s-knots[res][i])/theta
-                for j in range(len(d)):
-                    if d[j] >= 0 and d[j] <= 1:
-                        phi[j,i + K] = (1-d[j])**6 * (35 * d[j]**2 + 18 * d[j] + 3)/3
-                    else:
-                        phi[j,i + K] = 0
-            K = K + self.num_basis[res]
+        knots_1d = [torch.linspace(0, 1, int(np.sqrt(i))).to(self.device) for i in self.num_basis]
+        N = s.shape[0]
+        phi = torch.zeros(N, sum(self.num_basis)).to(self.device)
+        K = 0
+        for res, num_basis_res in enumerate(self.num_basis):
+            theta = 1 / np.sqrt(num_basis_res) * 2.5
+            knots_s1, knots_s2 = torch.meshgrid(knots_1d[res], knots_1d[res], indexing='ij')
+            knots = torch.stack((knots_s1.flatten(), knots_s2.flatten()), dim=1).to(self.device)
+            d = torch.cdist(s, knots) / theta
+            mask = (d >= 0) & (d <= 1)
+            weights = torch.zeros_like(d)
+            weights[mask] = ((1 - d[mask]) ** 6 * (35 * d[mask] ** 2 + 18 * d[mask] + 3) / 3)
+            phi[:, K:K + num_basis_res] = weights
+            K += num_basis_res
         return phi
+
 
 class MLP(nn.Module):
     """
@@ -208,7 +205,7 @@ class DeepKrigingMLP(MLP):
     p_dropout: float, the dropout probability, default to 0.0
     activation: str, the activation function to use, default to "relu"
     """
-    def __init__(self, input_dim: int, num_hidden_layers: int, hidden_dims: Union[int, List[int]], K: int = 4,
+    def __init__(self, input_dim: int, num_hidden_layers: int, hidden_dims: Union[int, List[int]], K: int = 1,
                  batch_norm: bool = False, p_dropout: float = 0.0, activation: str = "relu") -> None:
         self.K: int = K
         super(DeepKrigingMLP, self).__init__(input_dim, num_hidden_layers, hidden_dims, batch_norm, 
@@ -217,7 +214,7 @@ class DeepKrigingMLP(MLP):
     
     def _build_layers(self) -> None:
         super(DeepKrigingMLP, self)._build_layers()
-        self.embedding = DeepKrigingEmbedding1D(self.K)
+        self.embedding = DeepKrigingEmbedding2D(self.K)
         out_feature = self.hidden_dims[0] if isinstance(self.hidden_dims, List) else self.hidden_dims
         self.mlp_layers[0] = nn.Linear(
             self.mlp_layers[0].in_features + sum(self.embedding.num_basis), out_feature
@@ -249,7 +246,7 @@ class DeepKrigingConvNet(ConvNet):
     p_dropout: float, the dropout probability, default to 0.0
     activation: str, the activation function to use, default to "tanh"
     """
-    def __init__(self, input_width: int, input_height: int, K: int = 4, num_channels: int = 1, kernel_size: int = 7, 
+    def __init__(self, input_width: int, input_height: int, K: int = 1, num_channels: int = 1, kernel_size: int = 7, 
                  stride: int = 3, intermediate_channels: int = 64, dense_hidden_dim: int = 128, batch_norm: bool = False, 
                  p_dropout: float = 0.0, activation: str = "tanh") -> None:
         self.K: int = K
@@ -260,7 +257,7 @@ class DeepKrigingConvNet(ConvNet):
     
     def _build_layers(self) -> None:
         super(DeepKrigingConvNet, self)._build_layers()
-        self.embedding = DeepKrigingEmbedding1D(self.K)
+        self.embedding = DeepKrigingEmbedding2D(self.K)
         self.dense_layers[0] = nn.Linear(
             self.dense_layers[0].in_features + sum(self.embedding.num_basis), self.dense_hidden_dim
         )

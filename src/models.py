@@ -52,7 +52,7 @@ class LinearSCI(nn.Module):
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
-    def __init__(self, num_interventions: int, window_size: int, confounder_dim: int, 
+    def __init__(self, num_interventions: int, window_size: int, confounder_dim: int = None, 
                  unobserved_confounder: bool = False, **kwargs) -> None:
         super(LinearSCI, self).__init__()
         self.num_interventions: int = num_interventions
@@ -122,7 +122,7 @@ class LinearSCI(nn.Module):
                     torch.sum(t[i][:,self.window_size//2+1:] * weights[i][:,self.window_size//2+1:], dim=1)
             elif len(weights[i].shape) == 3:
                 t_sq = t[i].reshape(t[i].shape[0],-1)
-                weights_sq = weights.reshape(weights.shape[0],-1)
+                weights_sq = weights[i].reshape(weights[i].shape[0],-1)
                 mid_idx = t_sq.shape[-1] // 2
                 ti_bar = torch.sum(t_sq[:,:mid_idx] * weights_sq[:,:mid_idx], dim=1) + \
                     torch.sum(t_sq[:,mid_idx+1:] * weights_sq[:,mid_idx+1:], dim=1)
@@ -154,24 +154,25 @@ class NonlinearSCI(nn.Module):
     num_interventions: int, number of interventions
     window_size: int, grid size for neighboring interventions T_bar
     confounder_dim: int, dimension of the confounder X
+    s_dim: int, dimension of the spatial information, default to 1
     f_network_type: str, the model type for f, default to "convnet"
     g_network_type: str, the model type for g, default to "mlp"
     unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
     **kwargs: dict, additional keyword arguments for f, g, and U
         arguments for f:
         - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
-        - f_channels: int, number of channels for the convolutional neural network for f, default to 1
+        - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
         - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
         arguments for g:
         - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
-        - g_channels: int, number of channels for the convolutional neural network for g, default to 1
+        - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
         - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
         arguments for U:
         - kernel_func: str, the kernel function to use for the ICK model
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
-    def __init__(self, num_interventions: int, window_size: int, confounder_dim: int, f_network_type: str = "mlp", 
+    def __init__(self, num_interventions: int, window_size: int, confounder_dim: int = None, f_network_type: str = "mlp", 
                  g_network_type: str = "mlp", unobserved_confounder: bool = False, **kwargs) -> None:
         super(NonlinearSCI, self).__init__()
         self.num_interventions: int = num_interventions
@@ -250,9 +251,9 @@ class NonlinearSCI(nn.Module):
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
             (batch_size, window_size) or (batch_size, 1, window_size, window_size)
         x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
-            (batch_size, window_size) or (batch_size, 1, window_size, window_size)
+            (batch_size, window_size) or (batch_size, num_channels, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
-            of the training data, only used when unobserved_confounder is True
+            of the training data
         """
         assert self.window_size % 2 == 1, "The window size should be odd."
         y_t, y_t_bar, y_x = [], [], []
@@ -273,19 +274,21 @@ class NonlinearSCI(nn.Module):
             y_t.append(ti * getattr(self, f"beta_{i+1}"))
             ti_bar = (t[i] * t_mask).unsqueeze(1)     # broadcasting
             if self.f_network_type == "convnet":
-                y_t_bar.append(getattr(self, f"f_{i+1}")(ti_bar).squeeze())
+                y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
             elif self.f_network_type == "dk_convnet":
-                y_t_bar.append(getattr(self, f"f_{i+1}")(ti_bar, s).squeeze())
+                y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
+            y_t_bar.append(y_t_bar_i if len(y_t_bar_i.shape) else y_t_bar_i.unsqueeze(0))
         if self.g_network_type == "mlp":
             assert len(x.shape) == 2, "MLP only supports 1D input."
-            y_x.append(self.g(x).squeeze())
+            y_x_i = self.g(x).squeeze()
         elif self.g_network_type == "convnet":
-            y_x.append(self.g(x.unsqueeze(1)).squeeze())
+            y_x_i = self.g(x).squeeze()
         elif self.g_network_type == "dk_mlp":
             assert len(x.shape) == 2, "MLP only supports 1D input."
-            y_x.append(self.g(x, s).squeeze())
+            y_x_i = self.g(x, s).squeeze()
         elif self.g_network_type == "dk_convnet":
-            y_x.append(self.g(x.unsqueeze(1), s).squeeze())
+            y_x_i = self.g(x, s).squeeze()
+        y_x.append(y_x_i if len(y_x_i.shape) else y_x_i.unsqueeze(0))
         output = torch.sum(torch.stack(y_t + y_t_bar + y_x), dim=0)
         if self.unobserved_confounder and len(s.shape) == 1:
             s = s.unsqueeze(1)

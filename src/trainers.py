@@ -170,7 +170,8 @@ class Trainer(BaseTrainer):
         y_train_true = torch.empty(0).to(self.device)
         for step, batch in enumerate(self.data_generators[TRAIN]):
             samples = self._assign_device_to_data(*batch)
-            t, x, s, y = samples[0], samples[1], samples[2], samples[3].squeeze()
+            t, x, s = samples[0], samples[1], samples[2]
+            y = samples[3].squeeze() if len(samples[3]) > 1 else samples[3]
             if isinstance(self.model, LinearSCI):
                 try:
                     w = samples[4]
@@ -179,16 +180,10 @@ class Trainer(BaseTrainer):
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
-            if not self.model.unobserved_confounder:
-                if isinstance(self.model, LinearSCI):
-                    y_pred = self.model(t, x, w).float()
-                else:
-                    y_pred = self.model(t, x).float()
+            if isinstance(self.model, LinearSCI):
+                y_pred = self.model(t, x, w, s).float()
             else:
-                if isinstance(self.model, LinearSCI):
-                    y_pred = self.model(t, x, w, s).float()
-                else:
-                    y_pred = self.model(t, x, s).float()
+                y_pred = self.model(t, x, s).float()
             assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
             loss = self.loss_fn(y_pred, y.float())
             # Backward pass
@@ -264,16 +259,10 @@ class Trainer(BaseTrainer):
                         w = samples[4]
                     except IndexError:
                         raise IndexError("The weight must be provided for the linear model.")
-                if not self.model.unobserved_confounder:
-                    if isinstance(self.model, LinearSCI):
-                        y_pred = self.model(t, x, w).float()
-                    else:
-                        y_pred = self.model(t, x).float()
+                if isinstance(self.model, LinearSCI):
+                    y_pred = self.model(t, x, w, s).float()
                 else:
-                    if isinstance(self.model, LinearSCI):
-                        y_pred = self.model(t, x, w, s).float()
-                    else:
-                        y_pred = self.model(t, x, s).float()
+                    y_pred = self.model(t, x, s).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
                 y_val_true = torch.cat((y_val_true, y), dim=0)
         assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
