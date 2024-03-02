@@ -101,6 +101,13 @@ def main(args):
     print(f"Error on indirect effect: {np.abs(ie_true - ie_pred):.5f}")
     print(f"Error on total effect: {np.abs(te_true - te_pred):.5f}")
 
+    # Update wandb
+    wandb.config.update({
+        "de_error": np.abs(de_true - de_pred),
+        "ie_error": np.abs(ie_true - ie_pred),
+        "te_error": np.abs(te_true - te_pred)
+    })
+
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: DeepKriging with CNN, g: DeepKriging with MLP, with unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=128)

@@ -160,11 +160,15 @@ class NonlinearSCI(nn.Module):
     **kwargs: dict, additional keyword arguments for f, g, and U
         arguments for f:
         - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
+        - f_dense_hidden_dims: List[int], the dimensions of hidden dense layers for the convolutional neural 
+        network for f, default to 128
         - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
         - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
         - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
         arguments for g:
         - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
+        - g_dense_hidden_dims: List[int], the dimensions of hidden dense layers for the convolutional neural
+        network for g, default to 128
         - g_kernel_size: int, the kernel size for the convolutional neural network for g, default to 7
         - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
         - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
@@ -204,16 +208,22 @@ class NonlinearSCI(nn.Module):
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", MLP(self.window_size, len(f_hidden_dims), f_hidden_dims))
         elif self.f_network_type == "convnet":
+            f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
             f_kernel_size = self.kwargs.get('f_kernel_size', 7)
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", ConvNet(self.window_size, self.window_size, f_channels, f_kernel_size))
+                setattr(self, f"f_{i}", ConvNet(
+                    self.window_size, self.window_size, f_channels, f_kernel_size, dense_hidden_dim=f_dense_hidden_dims
+                ))
         elif self.f_network_type == "dk_convnet":
+            f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
             f_kernel_size = self.kwargs.get('f_kernel_size', 7)
             f_num_basis = self.kwargs.get('f_num_basis', 4)
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", DeepKrigingConvNet(self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size))
+                setattr(self, f"f_{i}", DeepKrigingConvNet(
+                    self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, dense_hidden_dim=f_dense_hidden_dims
+                ))
         else:
             raise Exception(f"Invalid network type for f: {self.f_network_type}")
         # model for g(X)
@@ -221,18 +231,24 @@ class NonlinearSCI(nn.Module):
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
             self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims)
         elif self.g_network_type == "convnet":
+            g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
             g_kernel_size = self.kwargs.get('g_kernel_size', 7)
-            self.g = ConvNet(self.window_size, self.window_size, g_channels, g_kernel_size)
+            self.g = ConvNet(
+                self.window_size, self.window_size, g_channels, g_kernel_size, dense_hidden_dim=g_dense_hidden_dims
+            )
         elif self.g_network_type == "dk_mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
             g_num_basis = self.kwargs.get('g_num_basis', 4)
             self.g = DeepKrigingMLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, g_num_basis)
         elif self.g_network_type == "dk_convnet":
+            g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
             g_kernel_size = self.kwargs.get('g_kernel_size', 7)
             g_num_basis = self.kwargs.get('g_num_basis', 4)
-            self.g = DeepKrigingConvNet(self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size)
+            self.g = DeepKrigingConvNet(
+                self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size, dense_hidden_dim=g_dense_hidden_dims
+            )
         else:
             raise Exception(f"Invalid network type for g: {self.g_network_type}")
         # model for U
