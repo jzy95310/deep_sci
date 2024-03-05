@@ -16,6 +16,9 @@ class SpatialDataset:
         window_size,
         num_samples,
         len_scale,
+        non_linear_confound = False,
+        conf_layers = 3,
+        conf_hidden = 20,
         seed=42
     ):
         """
@@ -66,7 +69,19 @@ class SpatialDataset:
         # Lastly, generate the coefficients
         # A random number is generated for the confounding coefficient
         self.de_coef = -4
-        self.confound_coef = np.random.uniform(0, 1, size=self.nlcd.shape[2])
+
+        if non_linear_confound:
+            # pca = self._fit_nlcd_pca()
+            self.confound = RandomMLP(
+                                self.nlcd.shape[2],
+                                self.nlcd.mean(axis=(0,1)),
+                                self.nlcd.std(axis=(0,1)),
+                                layers=conf_layers, 
+                                hidden_dim=conf_hidden, 
+                                random_seed=seed
+                            )
+        else:
+            self.confound = RandomLinear(self.nlcd.shape[2], random_seed=seed)
 
 
     def _create_random_function(self, seed):
@@ -76,9 +91,9 @@ class SpatialDataset:
 
         The result is a non-linear indirect effect.
         """
-        x = np.linspace(0, 1, 10)
+        x = np.linspace(-1, 1, 10)
 
-        y = np.random.multivariate_normal(0.4-3*x, 0.5*np.eye(10), 1)
+        y = np.random.multivariate_normal(0.4-3*x**2, 0.3*np.eye(10), 1)
         # y = np.sort(y)
         y = y.reshape(-1, 1)
 
@@ -127,7 +142,7 @@ class SpatialDataset:
         )[0]
 
         # Return the temperature value
-        return self.de_coef*ndvi_center + indirect_effect + np.dot(self.confound_coef, nlcd) + U
+        return self.de_coef*ndvi_center + indirect_effect + self.confound(nlcd) + U
 
     def __len__(self):
         return len(self.coords)
@@ -223,3 +238,51 @@ class SpatialDataset:
                 nlcd_weight[:, :, i] = result
 
         return nlcd_weight
+
+
+class RandomLinear:
+    def __init__(self, dim_in, random_seed=42):
+        """
+        This class creates a random linear model so that we can create a random function
+        to model the confounding effect.
+        """
+        np.random.seed(random_seed)
+        self.coefs = np.random.uniform(0, 1, dim_in)
+
+    def __call__(self, x):
+        return np.matmul(x, self.coefs)
+
+class RandomMLP:
+    def __init__(self, dim_in, mean, std, layers = 10, hidden_dim = 10, random_seed=42):
+        """
+        This class creates a random multi-layer perceptron with a sigmoid activation
+        function so that we can create a random function to model the confounding effect.
+        """
+        np.random.seed(random_seed)
+        print(random_seed)
+        # First layer maps input to hidden layer
+        coefs = [np.random.randn(dim_in, hidden_dim)]
+
+        # For each of the layers, we map the hidden layer to itself
+        if layers > 1:
+            for l in range(layers - 1):
+                coefs.append(np.random.randn(hidden_dim, hidden_dim))
+
+        # Fully connected layer last (dim_out = 1)
+        coefs.append(np.random.randn(hidden_dim, 1))
+        
+        self.coefs = coefs
+        self.layers = layers
+        self.mean = mean
+        self.std = std
+        self.a = lambda x: 1 / (1 + np.exp(-x)) 
+
+    def __call__(self, x):
+        x = (x - self.mean) / self.std
+        # This just calls the function on itself
+        for l in range(self.layers):
+            x = self.a(np.matmul(x, self.coefs[l]))
+
+        # Return final output without activation function
+        x = np.matmul(x, self.coefs[-1])
+        return x
