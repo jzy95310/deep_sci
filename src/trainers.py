@@ -171,19 +171,11 @@ class Trainer(BaseTrainer):
         for step, batch in enumerate(self.data_generators[TRAIN]):
             samples = self._assign_device_to_data(*batch)
             t, x, s = samples[0], samples[1], samples[2]
-            y = samples[3].squeeze() if len(samples[3]) > 1 else samples[3]
-            if isinstance(self.model, LinearSCI):
-                try:
-                    w = samples[4]
-                except IndexError:
-                    raise IndexError("The weight must be provided for the linear model.")
+            y = samples[3].view(-1)
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
-            if isinstance(self.model, LinearSCI):
-                y_pred = self.model(t, x, w, s).float()
-            else:
-                y_pred = self.model(t, x, s).float()
+            y_pred = self.model(t, x, s).float()
             assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
             loss = self.loss_fn(y_pred, y.float())
             # Backward pass
@@ -254,15 +246,7 @@ class Trainer(BaseTrainer):
             for batch in self.data_generators[VAL]:
                 samples = self._assign_device_to_data(*batch)
                 t, x, s, y = samples[0], samples[1], samples[2], samples[3].squeeze()
-                if isinstance(self.model, LinearSCI):
-                    try:
-                        w = samples[4]
-                    except IndexError:
-                        raise IndexError("The weight must be provided for the linear model.")
-                if isinstance(self.model, LinearSCI):
-                    y_pred = self.model(t, x, w, s).float()
-                else:
-                    y_pred = self.model(t, x, s).float()
+                y_pred = self.model(t, x, s).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
                 y_val_true = torch.cat((y_val_true, y), dim=0)
         assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
@@ -288,11 +272,6 @@ class Trainer(BaseTrainer):
             for batch in self.data_generators[TEST]:
                 samples = self._assign_device_to_data(*batch)
                 t, x, s, _ = samples[0], samples[1], samples[2], samples[3].squeeze()
-                if isinstance(self.model, LinearSCI):
-                    try:
-                        w = samples[4]
-                    except IndexError:
-                        raise IndexError("The weight must be provided for the linear model.")
                 if not indirect:
                     tmp = t[t_idx].clone()
                     if len(t[t_idx].shape) == 2:
@@ -310,10 +289,7 @@ class Trainer(BaseTrainer):
                         t[t_idx][:,window_size//2,window_size//2] = 0.
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
-                if isinstance(self.model, LinearSCI):
-                    y_pred = self.model(t, x, w, s).float()
-                else:
-                    y_pred = self.model(t, x, s).float()
+                y_pred = self.model(t, x, s).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
         return y_test_pred.detach().cpu().numpy()
 

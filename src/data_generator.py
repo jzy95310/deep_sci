@@ -25,7 +25,6 @@ class SpatialDataset(Dataset):
         self.x: np.ndarray = x
         self.s: np.ndarray = s
         self.y: np.ndarray = y
-        self.w: np.ndarray = w
         self._validate_and_preprocess_inputs()
         
     def _validate_and_preprocess_inputs(self) -> None:
@@ -35,9 +34,6 @@ class SpatialDataset(Dataset):
             "Confounder and targets must be the same length"
         assert len(self.s) == len(self.y), \
             "Spatial features and targets must be the same length"
-        if self.w is not None:
-            assert self.t[0].shape == self.w[0].shape, \
-                "Intervention and weight must be the same shape"
     
     def __len__(self) -> int:
         return len(self.y)
@@ -49,12 +45,9 @@ class SpatialDataset(Dataset):
             torch.from_numpy(self.x[idx]).float() if isinstance(self.x[idx], np.ndarray) else torch.tensor(self.x[idx]), \
             torch.from_numpy(self.s[idx]).float() if isinstance(self.s[idx], np.ndarray) else torch.tensor(self.s[idx]), \
             torch.from_numpy(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx])
-        if self.w is not None:
-            # Attach the list of weights to the batch
-            batch += ([torch.from_numpy(weights[idx]).float() if isinstance(weights[idx], np.ndarray) else torch.tensor(weights[idx]).float() for weights in self.w],)
         return batch
 
-def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w: List = None, train_size: float = 0.7,
+def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020, 
                          block_sampling: bool = False, num_blocks: int = 50, return_test_indices: bool = False) -> Tuple:
     """
@@ -73,8 +66,6 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w
         idx = np.random.permutation(len(y))
         t = [feat[idx] for feat in t]
         x, s, y = x[idx], s[idx], y[idx]
-        if w is not None:
-            w = [weights[idx] for weights in w]
     
     if block_sampling:
         kmeans = KMeans(n_clusters=num_blocks, random_state=random_state).fit(s)
@@ -101,32 +92,14 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w
         t_test, x_test, s_test = [feat[val_idx:] for feat in t], x[val_idx:], s[val_idx:]
         y_train, y_val, y_test = y[:train_idx], y[train_idx:val_idx], y[val_idx:]
 
-    if w is not None:
-        if block_sampling:
-            w_train = [weights[train_idx] for weights in w]
-            w_val = [weights[val_idx] for weights in w]
-            w_test = [weights[test_idx] for weights in w]
-        else:
-            w_train = [weights[:train_idx] for weights in w]
-            w_val = [weights[train_idx:val_idx] for weights in w]
-            w_test = [weights[val_idx:] for weights in w]
-        res = tuple([
-            SpatialDataset(t_train, x_train, s_train, y_train, w_train), 
-            SpatialDataset(t_val, x_val, s_val, y_val, w_val),
-            SpatialDataset(t_test, x_test, s_test, y_test, w_test)
-        ])
-        if return_test_indices:
-            res += (test_idx,) if block_sampling else (idx[val_idx:],)
-        return res
-    else:
-        res = tuple([
-            SpatialDataset(t_train, x_train, s_train, y_train), 
-            SpatialDataset(t_val, x_val, s_val, y_val),
-            SpatialDataset(t_test, x_test, s_test, y_test)
-        ])
-        if return_test_indices:
-            res += (test_idx,) if block_sampling else (idx[val_idx:],)
-        return res
+    res = tuple([
+        SpatialDataset(t_train, x_train, s_train, y_train), 
+        SpatialDataset(t_val, x_val, s_val, y_val),
+        SpatialDataset(t_test, x_test, s_test, y_test)
+    ])
+    if return_test_indices:
+        res += (test_idx,) if block_sampling else (idx[val_idx:],)
+    return res
 
 # ########################################################################################
 # MIT License

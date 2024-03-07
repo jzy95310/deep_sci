@@ -3,7 +3,7 @@ sys.path.insert(0, '../../src/')
 sys.path.insert(0, '../../data/geospatial_data/')
 import argparse
 import wandb
-import pickle as pkl
+import dill as pkl
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -16,10 +16,10 @@ from spatial_dataset_semisynthetic import SpatialDataset
 # Experimental tracking
 wandb.login()
 
-np.random.seed(2020)
-torch.manual_seed(2020)
-torch.cuda.manual_seed(2020)
-torch.cuda.manual_seed_all(2020)
+np.random.seed(2023)
+torch.manual_seed(2023)
+torch.cuda.manual_seed(2023)
+torch.cuda.manual_seed_all(2023)
 torch.backends.cudnn.deterministic = True
 
 
@@ -49,7 +49,6 @@ def main(args):
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="convnet", 
-        f_kernel_size=3,
         g_network_type="mlp", 
         g_hidden_dims=[128], 
         unobserved_confounder=True, 
@@ -61,7 +60,7 @@ def main(args):
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_f_cnn_g_mlp_without_U", 
+        name="geospatial_f_cnn_g_mlp_with_U", 
         allow_val_change=True
     )
     config = wandb.config
@@ -100,7 +99,7 @@ def main(args):
     print(f"Error on direct effect: {np.abs(de_true - de_pred):.5f}")
     print(f"Error on indirect effect: {np.abs(ie_true - ie_pred):.5f}")
     print(f"Error on total effect: {np.abs(te_true - te_pred):.5f}")
-
+    
     # Update wandb
     wandb.config.update({
         "de_error": np.abs(de_true - de_pred),
@@ -109,11 +108,12 @@ def main(args):
     })
 
 if __name__ == '__main__':
-    arg_parser = argparse.ArgumentParser(description='f: CNN, g: MLP, without unobserved confounder')
+    arg_parser = argparse.ArgumentParser(description='f: CNN, g: MLP, with unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=128)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)
+    arg_parser.add_argument('--weight_decay', type=float, default=0.0)
     arg_parser.add_argument('--n_epochs', type=int, default=1000)
     arg_parser.add_argument('--patience', type=int, default=20)
     args = arg_parser.parse_known_args()[0]

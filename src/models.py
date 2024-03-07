@@ -47,18 +47,20 @@ class LinearSCI(nn.Module):
     window_size: int, grid size for neighboring interventions T_bar
     confounder_dim: int, dimension of the confounder X
     unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
+    dimensionality: int, the dimensionality of the window, either 1 or 2
     **kwargs: dict, additional keyword arguments for U
         - kernel_func: str, the kernel function to use for the ICK model
         - kernel_param_vals: List[float], the initial values for the kernel parameters
         - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
     def __init__(self, num_interventions: int, window_size: int, confounder_dim: int = None, 
-                 unobserved_confounder: bool = False, **kwargs) -> None:
+                 unobserved_confounder: bool = False, dimensionality: int = 1, **kwargs) -> None:
         super(LinearSCI, self).__init__()
         self.num_interventions: int = num_interventions
         self.window_size: int = window_size
         self.confounder_dim: int = confounder_dim
         self.unobserved_confounder: bool = unobserved_confounder
+        self.dimensionality: int = dimensionality
         self.kwargs: dict = kwargs
         self._build_model()
     
@@ -72,6 +74,7 @@ class LinearSCI(nn.Module):
         Jiang, Ziyang, et al. "Incorporating prior knowledge into neural networks through an implicit 
         composite kernel." arXiv preprint arXiv:2205.07384 (2022).
         """
+        assert self.dimensionality in [1,2], "The dimensionality should be either 1 or 2."
         for i in range(1,self.num_interventions+1):
             setattr(self, f"beta_{i}", nn.Parameter(torch.randn(1)))
             setattr(self, f"gamma_{i}", nn.Parameter(torch.randn(1)))
@@ -79,6 +82,10 @@ class LinearSCI(nn.Module):
             self.alpha = nn.ParameterList([nn.Parameter(torch.randn(1)) for _ in range(self.confounder_dim)])
         else:
             self.alpha = nn.Parameter(torch.randn(1))
+        if self.dimensionality == 1:
+            self.weights = nn.Parameter(nn.init.kaiming_uniform_(torch.empty(self.window_size, 1)))
+        else:
+            self.weights = nn.Parameter(nn.init.kaiming_uniform_(torch.empty(self.window_size, self.window_size)))
         if self.unobserved_confounder:
             kernel_assignment = ['ImplicitNystromKernel']
             kernel_params = {
@@ -94,14 +101,11 @@ class LinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, t: List[torch.Tensor], x: torch.Tensor, weights: torch.Tensor, 
-                s: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
         """
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
             (batch_size, window_size) or (batch_size, 1, window_size, window_size)
         x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
-            (batch_size, window_size) or (batch_size, 1, window_size, window_size)
-        weights: torch.Tensor, a tensor containing the weights for the neighboring interventions with shape
             (batch_size, window_size) or (batch_size, 1, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
             of the training data, only used when unobserved_confounder is True
@@ -116,18 +120,17 @@ class LinearSCI(nn.Module):
             else:
                 raise Exception(f"Invalid shape for intervention variable: {t[i].shape}")
             y_t.append(ti * getattr(self, f"beta_{i+1}"))
-            if len(weights[i].shape) == 2:
+            if self.dimensionality == 1:
                 # Weighted sum of neighboring interventions
-                ti_bar = torch.sum(t[i][:,:self.window_size//2] * weights[i][:,:self.window_size//2], dim=1) + \
-                    torch.sum(t[i][:,self.window_size//2+1:] * weights[i][:,self.window_size//2+1:], dim=1)
-            elif len(weights[i].shape) == 3:
+                ti_bar = torch.sum(t[i][:,:self.window_size//2] * self.weights.view(-1)[:self.window_size//2], dim=1) + \
+                    torch.sum(t[i][:,self.window_size//2+1:] * self.weights.view(-1)[self.window_size//2+1:], dim=1)
+            elif self.dimensionality == 2:
                 t_sq = t[i].reshape(t[i].shape[0],-1)
-                weights_sq = weights[i].reshape(weights[i].shape[0],-1)
                 mid_idx = t_sq.shape[-1] // 2
-                ti_bar = torch.sum(t_sq[:,:mid_idx] * weights_sq[:,:mid_idx], dim=1) + \
-                    torch.sum(t_sq[:,mid_idx+1:] * weights_sq[:,mid_idx+1:], dim=1)
+                ti_bar = torch.sum(t_sq[:,:mid_idx] * self.weights.view(-1)[:mid_idx], dim=1) + \
+                    torch.sum(t_sq[:,mid_idx+1:] * self.weights.view(-1)[mid_idx+1:], dim=1)
             else:
-                raise Exception(f"Invalid shape for weight: {weights[i].shape}")
+                raise Exception(f"Invalid shape for weight: {self.weights.shape}")
             y_t_bar.append(ti_bar * getattr(self, f"gamma_{i+1}"))
         if len(x.shape) == 2:
             assert self.confounder_dim == x.shape[1], "The dimension of the confounder should match the input."
@@ -294,10 +297,10 @@ class NonlinearSCI(nn.Module):
                 ti = t[i][:,self.window_size//2,self.window_size//2]
             y_t.append(ti * getattr(self, f"beta_{i+1}"))
             ti_bar = (t[i] * t_mask).unsqueeze(1)     # broadcasting
-            if self.f_network_type == "convnet":
-                y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
-            elif self.f_network_type == "dk_convnet":
+            if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
+            else:
+                y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
             y_t_bar.append(y_t_bar_i if len(y_t_bar_i.shape) else y_t_bar_i.unsqueeze(0))
         if self.g_network_type == "mlp":
             assert len(x.shape) == 2, "MLP only supports 1D input."
