@@ -47,6 +47,11 @@ class DurhamDataset():
         coords = np.array(np.where(self.temp != 0)).T
         return coords
     
+
+    def __len__(self):
+        return len(self.coords)
+    
+
     def __getitem__(self, idx):
         i, j = self.coords[idx]
 
@@ -68,4 +73,22 @@ class DurhamDataset():
         temp = self.temp[i, j]
         
         return i, j, nlcd, ndvi, albedo, temp
-       
+
+
+    def get_item_by_coords(self, i, j):
+        nlcd = self.nlcd[
+            i - self.window_size : i + self.window_size + 1,
+            j - self.window_size : j + self.window_size + 1,
+            :
+        ]
+        
+        ndvi = self.ndvi[
+            i - self.window_size : i + self.window_size + 1,
+            j - self.window_size : j + self.window_size + 1,
+        ]
+        albedo = self.albedo[
+            i - self.window_size : i + self.window_size + 1,
+            j - self.window_size : j + self.window_size + 1,
+        ]
+        
+        return i, j, nlcd, ndvi, albedo
