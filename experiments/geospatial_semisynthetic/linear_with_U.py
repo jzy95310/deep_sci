@@ -45,7 +45,7 @@ def main(args):
     
     # Model definition
     model = LinearSCI(
-        num_interventions=1, 
+        num_interventions=len(interventions), 
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         unobserved_confounder=True, 
@@ -58,7 +58,7 @@ def main(args):
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_linear_with_U", 
+        name="geospatial_semi_linear_with_U", 
         allow_val_change=True
     )
     config = wandb.config
@@ -106,7 +106,7 @@ def main(args):
     })
 
 if __name__ == '__main__':
-    arg_parser = argparse.ArgumentParser(description='Linear, without unobserved confounder')
+    arg_parser = argparse.ArgumentParser(description='Linear, with unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=128)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)

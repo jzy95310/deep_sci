@@ -45,7 +45,7 @@ def main(args):
     
     # Model definition
     model = LinearSCI(
-        num_interventions=1, 
+        num_interventions=len(interventions), 
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         unobserved_confounder=False, 
@@ -55,7 +55,7 @@ def main(args):
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_linear_without_U", 
+        name="geospatial_semi_linear_without_U", 
         allow_val_change=True
     )
     config = wandb.config

@@ -45,7 +45,7 @@ def main(args):
     
     # Model definition
     model = NonlinearSCI(
-        num_interventions=1, 
+        num_interventions=len(interventions), 
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="convnet", 
@@ -60,7 +60,7 @@ def main(args):
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_f_cnn_g_mlp_with_U", 
+        name="geospatial_semi_f_cnn_g_mlp_with_U", 
         allow_val_change=True
     )
     config = wandb.config

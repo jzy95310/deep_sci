@@ -104,9 +104,9 @@ class LinearSCI(nn.Module):
     def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
         """
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
-            (batch_size, window_size) or (batch_size, 1, window_size, window_size)
+            (batch_size, window_size) or (batch_size, window_size, window_size)
         x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
-            (batch_size, window_size) or (batch_size, 1, window_size, window_size)
+            (batch_size, window_size) or (batch_size, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
             of the training data, only used when unobserved_confounder is True
         """
@@ -142,6 +142,10 @@ class LinearSCI(nn.Module):
         if self.unobserved_confounder and len(s.shape) == 1:
             s = s.unsqueeze(1)
         return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
+    
+    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+        with torch.no_grad():
+            return self.forward(t, x, s)
 
 
 class NonlinearSCI(nn.Module):
@@ -273,7 +277,7 @@ class NonlinearSCI(nn.Module):
     def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
         """
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
-            (batch_size, window_size) or (batch_size, 1, window_size, window_size)
+            (batch_size, window_size) or (batch_size, window_size, window_size)
         x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
             (batch_size, window_size) or (batch_size, num_channels, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
@@ -317,6 +321,10 @@ class NonlinearSCI(nn.Module):
         if self.unobserved_confounder and len(s.shape) == 1:
             s = s.unsqueeze(1)
         return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
+    
+    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+        with torch.no_grad():
+            return self.forward(t, x, s)
         
 # ########################################################################################
 # MIT License
