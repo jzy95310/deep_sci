@@ -18,9 +18,8 @@ class SpatialDataset(Dataset):
     x: np.ndarray, A numpy array containing the confounder for each sample
     s: np.ndarray, A numpy array containing the spatial information for each sample
     y: List, A list of the targets for each sample
-    w: List, A list of numpy arrays containing the weights for neighboring interventions, default None
     """
-    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, w: List = None) -> None:
+    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
         self.t: List = t
         self.x: np.ndarray = x
         self.s: np.ndarray = s
