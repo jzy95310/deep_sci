@@ -60,12 +60,14 @@ class GraphSpatialDataset(SpatialDataset):
     """
     def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
         super(GraphSpatialDataset, self).__init__(t, x, s, y)
-        self.features, self.edge_indices = [], []
+        window_size = t[0].shape[1]
+        edge = self._generate_edge_indices(window_size)
+        self.edge_indices = np.array([edge for _ in range(len(t[0]))])
+        self.features = []
         for i in tqdm(range(len(t[0])), position=0, leave=True):
-            feat, edge = self._convert_data_to_graph_2d([feat[i] for feat in t])
+            feat = self._convert_data_to_graph_2d([feat[i] for feat in t])
             self.features.append(feat)
-            self.edge_indices.append(edge)
-        self.features, self.edge_indices = np.array(self.features), np.array(self.edge_indices)
+        self.features = np.array(self.features)
     
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
@@ -100,8 +102,7 @@ class GraphSpatialDataset(SpatialDataset):
             for j in range(window_size):
                 feature = np.array([feat[i, j] for feat in t])
                 features = np.vstack((features, feature))
-        edge_indices = self._generate_edge_indices(window_size)
-        return features.T, edge_indices.T
+        return features.T
 
     def _generate_edge_indices(self, window_size) -> np.ndarray:
         """
@@ -119,7 +120,7 @@ class GraphSpatialDataset(SpatialDataset):
                     if 0 <= new_i < window_size and 0 <= new_j < window_size and new_i != window_size // 2 and new_j != window_size // 2:
                         edge_indices = np.vstack((edge_indices, np.array([i * window_size + j, new_i * window_size + new_j])))
                         edge_indices = np.vstack((edge_indices, np.array([new_i * window_size + new_j, i * window_size + j]))) 
-        return edge_indices
+        return edge_indices.T
 
 def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020, 
