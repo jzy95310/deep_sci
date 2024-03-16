@@ -5,6 +5,7 @@ import argparse
 import wandb
 import dill as pkl
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 import torch
 from torch.utils.data import DataLoader
 
@@ -16,10 +17,10 @@ from spatial_dataset_semisynthetic import SpatialDataset
 # Experimental tracking
 wandb.login()
 
-np.random.seed(2023)
-torch.manual_seed(2023)
-torch.cuda.manual_seed(2023)
-torch.cuda.manual_seed_all(2023)
+np.random.seed(2020)
+torch.manual_seed(2020)
+torch.cuda.manual_seed(2020)
+torch.cuda.manual_seed_all(2020)
 torch.backends.cudnn.deterministic = True
 
 
@@ -32,6 +33,8 @@ def main(args):
     confounder = np.array([x[2] for x in data])
     spatial_features = np.array([[x[0],x[1]] for x in data])
     targets = np.array([x[4] for x in data])
+    scaler = StandardScaler()
+    targets = scaler.fit_transform(targets.reshape(-1,1))
 
     train_dataset, val_dataset, test_dataset, test_indices = train_val_test_split(
         interventions, confounder, spatial_features, targets, 
@@ -85,6 +88,10 @@ def main(args):
     y_pred_01 = trainer.predict(window_size=interventions[0].shape[-1], direct=False, indirect=True)
     y_pred_10 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=False)
     y_pred_11 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=True)
+    y_pred_00 = scaler.inverse_transform(y_pred_00.reshape(-1,1)).squeeze()
+    y_pred_01 = scaler.inverse_transform(y_pred_01.reshape(-1,1)).squeeze()
+    y_pred_10 = scaler.inverse_transform(y_pred_10.reshape(-1,1)).squeeze()
+    y_pred_11 = scaler.inverse_transform(y_pred_11.reshape(-1,1)).squeeze()
     de_pred = np.mean(y_pred_11 - y_pred_01)
     ie_pred = np.mean(y_pred_01 - y_pred_00)
     te_pred = np.mean(y_pred_11 - y_pred_00)

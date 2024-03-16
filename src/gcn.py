@@ -1,8 +1,8 @@
-# kcn.py: a file containing all neural network definitions for Graph Convolutional Network (GCN)
+# gcn.py: a file containing all neural network definitions for Graph Convolutional Network (GCN)
 
 import torch
 from torch import nn
-from torch_geometry.nn import GCNConv, Sequential
+from torch_geometric.nn import GraphConv, Sequential
 from typing import List, Union
 
 class Erf(nn.Module):
@@ -63,12 +63,12 @@ class GCN(nn.Module):
             hidden_dims = self.hidden_dims
         for i in range(self.num_hidden_layers):
             if i == 0:
-                layers.append(GCNConv(self.input_dim, hidden_dims[i]))
+                layers.append((GraphConv(self.input_dim, hidden_dims[i]), 'x, edge_indices -> x'))
             else:
-                layers.append(GCNConv(hidden_dims[i-1], hidden_dims[i]))
+                layers.append((GraphConv(hidden_dims[i-1], hidden_dims[i]), 'x, edge_indices -> x'))
             layers.append(ACTIVATIONS[self.activation])
         layers.append(nn.Linear(hidden_dims[-1], 1))
-        self.gcn_layers = Sequential(*layers)
+        self.gcn_layers = Sequential('x, edge_indices', layers)
     
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         return self.gcn_layers(x, edge_index)

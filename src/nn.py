@@ -130,11 +130,11 @@ class ConvNet(nn.Module):
     dense_hidden_dim: int or list of int, the dimension of hidden layers after convolutional layers, default to 128
     batch_norm: bool, whether to use batch normalization in each convolutional block, default to False
     p_dropout: float, the dropout probability, default to 0.0
-    activation: str, the activation function to use, default to "elu"
+    activation: str, the activation function to use, default to "relu"
     """
     def __init__(self, input_width: int, input_height: int, num_channels: int = 1, kernel_size: int = 7, 
                  stride: int = 3, intermediate_channels: int = 64, dense_hidden_dim: int = 128, batch_norm: bool = False, 
-                 p_dropout: float = 0.0, activation: str = "elu") -> None:
+                 p_dropout: float = 0.0, activation: str = "relu") -> None:
         super(ConvNet, self).__init__()
         self.input_width: int = input_width
         self.input_height: int = input_height
@@ -248,7 +248,7 @@ class DeepKrigingConvNet(ConvNet):
     """
     def __init__(self, input_width: int, input_height: int, K: int = 1, num_channels: int = 1, kernel_size: int = 7, 
                  stride: int = 3, intermediate_channels: int = 64, dense_hidden_dim: int = 128, batch_norm: bool = False, 
-                 p_dropout: float = 0.0, activation: str = "tanh") -> None:
+                 p_dropout: float = 0.0, activation: str = "relu") -> None:
         self.K: int = K
         super(DeepKrigingConvNet, self).__init__(input_width, input_height, num_channels, kernel_size, stride, 
                                                  intermediate_channels, dense_hidden_dim, batch_norm, p_dropout, 

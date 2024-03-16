@@ -3,6 +3,7 @@
 
 from typing import List, Tuple
 import numpy as np
+from tqdm import tqdm
 from sklearn.cluster import KMeans
 
 import torch
@@ -46,9 +47,84 @@ class SpatialDataset(Dataset):
             torch.from_numpy(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx])
         return batch
 
+class GraphSpatialDataset(SpatialDataset):
+    """
+    Defines a dataset containing all variables for spatial causal inference with graph convolutional network
+
+    Arguments
+    --------------
+    t: List[np.ndarray], A list of numpy arrays containing the interventions for each sample
+    x: np.ndarray, A numpy array containing the confounder for each sample
+    s: np.ndarray, A numpy array containing the spatial information for each sample
+    y: List, A list of the targets for each sample
+    """
+    def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
+        super(GraphSpatialDataset, self).__init__(t, x, s, y)
+        self.features, self.edge_indices = [], []
+        for i in tqdm(range(len(t[0])), position=0, leave=True):
+            feat, edge = self._convert_data_to_graph_2d([feat[i] for feat in t])
+            self.features.append(feat)
+            self.edge_indices.append(edge)
+        self.features, self.edge_indices = np.array(self.features), np.array(self.edge_indices)
+    
+    def __getitem__(self, idx) -> Tuple:
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        batch = list([torch.from_numpy(feat[idx]).float() if isinstance(feat[idx], np.ndarray) else torch.tensor(feat[idx]).float() for feat in self.t]), \
+            torch.from_numpy(self.x[idx]).float() if isinstance(self.x[idx], np.ndarray) else torch.tensor(self.x[idx]), \
+            torch.from_numpy(self.s[idx]).float() if isinstance(self.s[idx], np.ndarray) else torch.tensor(self.s[idx]), \
+            torch.from_numpy(self.y[idx]).float() if isinstance(self.y[idx], np.ndarray) else torch.tensor(self.y[idx]), \
+            torch.from_numpy(self.features[idx]).float(), \
+            torch.from_numpy(self.edge_indices[idx]).long()
+        return batch
+
+    def _convert_data_to_graph_2d(self, t: List[np.ndarray]) -> np.ndarray:
+        """
+        Convert the input data to a 2D graph for graph convolutional network
+
+        Arguments
+        --------------
+        t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
+            (window_size, window_size)
+        
+        Returns
+        --------------
+        features: np.ndarray, a numpy array containing the features of the nodes, with shape
+            (num_nodes, num_interventions)
+        edge_indices: np.ndarray, a numpy array containing the edge indices of the graph, with shape
+            (num_edges, 2)
+        """
+        features = np.empty((0, len(t)))
+        window_size = t[0].shape[1]
+        for i in range(window_size):
+            for j in range(window_size):
+                feature = np.array([feat[i, j] for feat in t])
+                features = np.vstack((features, feature))
+        edge_indices = self._generate_edge_indices(window_size)
+        return features.T, edge_indices.T
+
+    def _generate_edge_indices(self, window_size) -> np.ndarray:
+        """
+        Generate the edge indices for the graph convolutional network
+        """
+        edge_indices = np.empty((0, 2))
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+
+        # All nodes are connected to their four neighbors (if they exist), 
+        # except for the nodes on the center of the grid
+        for i in range(window_size):
+            for j in range(window_size):
+                for direction in directions:
+                    new_i, new_j = i + direction[0], j + direction[1]
+                    if 0 <= new_i < window_size and 0 <= new_j < window_size and new_i != window_size // 2 and new_j != window_size // 2:
+                        edge_indices = np.vstack((edge_indices, np.array([i * window_size + j, new_i * window_size + new_j])))
+                        edge_indices = np.vstack((edge_indices, np.array([new_i * window_size + new_j, i * window_size + j]))) 
+        return edge_indices
+
 def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020, 
-                         block_sampling: bool = False, num_blocks: int = 50, return_test_indices: bool = False) -> Tuple:
+                         block_sampling: bool = False, num_blocks: int = 50, return_test_indices: bool = False, 
+                         graph_input: bool = False) -> Tuple:
     """
     Splits the dataset into training, validation, and test sets
     If shuffle is set to True, the data will be shuffled before splitting
@@ -91,11 +167,18 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, t
         t_test, x_test, s_test = [feat[val_idx:] for feat in t], x[val_idx:], s[val_idx:]
         y_train, y_val, y_test = y[:train_idx], y[train_idx:val_idx], y[val_idx:]
 
-    res = tuple([
-        SpatialDataset(t_train, x_train, s_train, y_train), 
-        SpatialDataset(t_val, x_val, s_val, y_val),
-        SpatialDataset(t_test, x_test, s_test, y_test)
-    ])
+    if not graph_input:
+        res = tuple([
+            SpatialDataset(t_train, x_train, s_train, y_train), 
+            SpatialDataset(t_val, x_val, s_val, y_val),
+            SpatialDataset(t_test, x_test, s_test, y_test)
+        ])
+    else:
+        res = tuple([
+            GraphSpatialDataset(t_train, x_train, s_train, y_train), 
+            GraphSpatialDataset(t_val, x_val, s_val, y_val),
+            GraphSpatialDataset(t_test, x_test, s_test, y_test)
+        ])
     if return_test_indices:
         res += (test_idx,) if block_sampling else (idx[val_idx:],)
     return res

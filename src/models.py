@@ -6,6 +6,7 @@ from torch import nn
 
 from typing import List
 from nn import MLP, ConvNet, DeepKrigingMLP, DeepKrigingConvNet
+from gcn import GCN
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
 
@@ -171,6 +172,7 @@ class NonlinearSCI(nn.Module):
         network for f, default to 128
         - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
         - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
+        - f_activation: str, the activation function to use for the MLP for f, default to "relu"
         - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
         arguments for g:
         - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
@@ -178,6 +180,7 @@ class NonlinearSCI(nn.Module):
         network for g, default to 128
         - g_kernel_size: int, the kernel size for the convolutional neural network for g, default to 7
         - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
+        - g_activation: str, the activation function to use for the MLP for g, default to "relu"
         - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
         arguments for U:
         - kernel_func: str, the kernel function to use for the ICK model
@@ -210,17 +213,19 @@ class NonlinearSCI(nn.Module):
         for i in range(1,self.num_interventions+1):
             setattr(self, f"beta_{i}", nn.Parameter(torch.randn(1)))
         # model for f(T_bar)
+        f_activation = self.kwargs.get('f_activation', 'relu')
         if self.f_network_type == "mlp":
             f_hidden_dims = self.kwargs.get('f_hidden_dims', [128,64])
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", MLP(self.window_size, len(f_hidden_dims), f_hidden_dims))
+                setattr(self, f"f_{i}", MLP(self.window_size, len(f_hidden_dims), f_hidden_dims, activation=f_activation))
         elif self.f_network_type == "convnet":
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
             f_kernel_size = self.kwargs.get('f_kernel_size', 7)
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", ConvNet(
-                    self.window_size, self.window_size, f_channels, f_kernel_size, dense_hidden_dim=f_dense_hidden_dims
+                    self.window_size, self.window_size, f_channels, f_kernel_size, 
+                    dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
                 ))
         elif self.f_network_type == "dk_convnet":
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
@@ -229,32 +234,42 @@ class NonlinearSCI(nn.Module):
             f_num_basis = self.kwargs.get('f_num_basis', 4)
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", DeepKrigingConvNet(
-                    self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, dense_hidden_dim=f_dense_hidden_dims
+                    self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, 
+                    dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
                 ))
+        elif self.f_network_type == "gcn":
+            f_hidden_dims = self.kwargs.get('f_hidden_dims', 16)
+            f_num_hidden_layers = self.kwargs.get('f_num_hidden_layers', 1)
+            setattr(self, "f", GCN(self.num_interventions, f_num_hidden_layers, f_hidden_dims, 
+                                   activation=f_activation))
         else:
             raise Exception(f"Invalid network type for f: {self.f_network_type}")
         # model for g(X)
+        g_activation = self.kwargs.get('g_activation', 'relu')
         if self.g_network_type == "mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
-            self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims)
+            self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, activation=g_activation)
         elif self.g_network_type == "convnet":
             g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
             g_kernel_size = self.kwargs.get('g_kernel_size', 7)
             self.g = ConvNet(
-                self.window_size, self.window_size, g_channels, g_kernel_size, dense_hidden_dim=g_dense_hidden_dims
+                self.window_size, self.window_size, g_channels, g_kernel_size, 
+                dense_hidden_dim=g_dense_hidden_dims, activation=g_activation
             )
         elif self.g_network_type == "dk_mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
             g_num_basis = self.kwargs.get('g_num_basis', 4)
-            self.g = DeepKrigingMLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, g_num_basis)
+            self.g = DeepKrigingMLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, 
+                                    g_num_basis, activation=g_activation)
         elif self.g_network_type == "dk_convnet":
             g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
             g_kernel_size = self.kwargs.get('g_kernel_size', 7)
             g_num_basis = self.kwargs.get('g_num_basis', 4)
             self.g = DeepKrigingConvNet(
-                self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size, dense_hidden_dim=g_dense_hidden_dims
+                self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size, 
+                dense_hidden_dim=g_dense_hidden_dims, activation=g_activation
             )
         else:
             raise Exception(f"Invalid network type for g: {self.g_network_type}")
@@ -274,7 +289,8 @@ class NonlinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
         """
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
             (batch_size, window_size) or (batch_size, window_size, window_size)
@@ -282,8 +298,13 @@ class NonlinearSCI(nn.Module):
             (batch_size, window_size) or (batch_size, num_channels, window_size, window_size)
         s: torch.Tensor, a tensor containing the spatial information (e.g., coordinates or distance) 
             of the training data
+        graph_features: torch.Tensor, a tensor containing the graph features for the GCN model
+        edge_indices: torch.Tensor, a tensor containing the edge indices for the GCN model
         """
         assert self.window_size % 2 == 1, "The window size should be odd."
+        if self.f_network_type == "gcn":
+            assert graph_features is not None and edge_indices is not None, \
+                "Graph features and edge indices are required for the GCN model."
         y_t, y_t_bar, y_x = [], [], []
         t_mask = torch.ones_like(t[0])
         # Masking the center of the intervention variables to be zero
@@ -303,6 +324,9 @@ class NonlinearSCI(nn.Module):
             ti_bar = (t[i] * t_mask).unsqueeze(1)     # broadcasting
             if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
+            elif self.f_network_type == "gcn":
+                y_t_bar_i = getattr(self, "f")(graph_features, edge_indices).squeeze()
+                y_t_bar_i = y_t_bar_i[self.window_size**2//2].unsqueeze(0)
             else:
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
             y_t_bar.append(y_t_bar_i if len(y_t_bar_i.shape) else y_t_bar_i.unsqueeze(0))

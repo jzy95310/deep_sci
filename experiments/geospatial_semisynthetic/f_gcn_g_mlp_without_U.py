@@ -39,7 +39,7 @@ def main(args):
     train_dataset, val_dataset, test_dataset, test_indices = train_val_test_split(
         interventions, confounder, spatial_features, targets, 
         train_size=0.6, val_size=0.2, test_size=0.2, shuffle=False, 
-        block_sampling=True, return_test_indices=True
+        block_sampling=True, return_test_indices=True, graph_input=True
     )
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
@@ -51,16 +51,17 @@ def main(args):
         num_interventions=len(interventions), 
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
-        f_network_type="convnet", 
-        g_network_type="mlp", 
-        g_hidden_dims=[128], 
+        f_network_type="gcn",
+        g_network_type="mlp",
+        g_num_basis=4, 
+        g_hidden_dims=[128],
         unobserved_confounder=False
     )
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_f_cnn_g_mlp_without_U", 
+        name="geospatial_semi_f_gcn_g_mlp_without_U", 
         allow_val_change=True
     )
     config = wandb.config
@@ -112,8 +113,8 @@ def main(args):
     })
 
 if __name__ == '__main__':
-    arg_parser = argparse.ArgumentParser(description='f: CNN, g: MLP, without unobserved confounder')
-    arg_parser.add_argument('--batch_size', type=int, default=128)
+    arg_parser = argparse.ArgumentParser(description='f: GCN, g: MLP, without unobserved confounder')
+    arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)

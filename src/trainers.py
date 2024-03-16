@@ -76,17 +76,20 @@ class BaseTrainer(ABC):
         self._set_optimizer()
     
     def _assign_device_to_data(self, t: List, x: torch.Tensor, s: torch.Tensor, y: torch.Tensor, 
-                               w: List = None) -> Tuple:
+                               graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> Tuple:
         """
         Assign the device to the features and the target
         """
         t = list(map(lambda x: x.to(self.device), t))
         x, s, y = x.to(self.device), s.to(self.device), y.to(self.device)
-        if w is not None:
-            w = list(map(lambda x: x.to(self.device), w))
-            return t, x, s, y, w
-        else:
-            return t, x, s, y
+        res = (t, x, s, y)
+        if graph_features is not None:
+            graph_features = graph_features.to(self.device)
+            res += (graph_features,)
+        if edge_indices is not None:
+            edge_indices = edge_indices.to(self.device)
+            res += (edge_indices,)
+        return res
     
     @abstractmethod
     def _validate_inputs(self) -> None:
@@ -172,10 +175,17 @@ class Trainer(BaseTrainer):
             samples = self._assign_device_to_data(*batch)
             t, x, s = samples[0], samples[1], samples[2]
             y = samples[3].view(-1)
+            if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
+                if samples[4].shape[0] > 1:
+                    raise IndexError("When using GCN, the batch size must be set to 1.")
+                features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
-            y_pred = self.model(t, x, s).float()
+            if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
+                y_pred = self.model(t, x, s).float()
+            else:
+                y_pred = self.model(t, x, s, features, edge_dices).float()
             assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
             loss = self.loss_fn(y_pred, y.float())
             # Backward pass
@@ -245,8 +255,13 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             for batch in self.data_generators[VAL]:
                 samples = self._assign_device_to_data(*batch)
-                t, x, s, y = samples[0], samples[1], samples[2], samples[3].squeeze()
-                y_pred = self.model(t, x, s).float()
+                t, x, s, y = samples[0], samples[1], samples[2], samples[3].view(-1)
+                if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
+                    features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
+                if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
+                    y_pred = self.model(t, x, s).float()
+                else:
+                    y_pred = self.model(t, x, s, features, edge_dices).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
                 y_val_true = torch.cat((y_val_true, y), dim=0)
         assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
@@ -271,7 +286,9 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             for batch in self.data_generators[TEST]:
                 samples = self._assign_device_to_data(*batch)
-                t, x, s, _ = samples[0], samples[1], samples[2], samples[3].squeeze()
+                t, x, s, _ = samples[0], samples[1], samples[2], samples[3].view(-1)
+                if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
+                    features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
                 if not indirect:
                     tmp = t[t_idx].clone()
                     if len(t[t_idx].shape) == 2:
@@ -282,6 +299,10 @@ class Trainer(BaseTrainer):
                         t[t_idx][:,window_size//2,window_size//2] = tmp[:,window_size//2,window_size//2]
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
+                    if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
+                        feature_mask = torch.zeros_like(features)
+                        feature_mask[window_size**2//2] = 1.
+                        features = features * feature_mask
                 if not direct:
                     if len(t[t_idx].shape) == 2:
                         t[t_idx][:,window_size//2] = 0.
@@ -289,7 +310,14 @@ class Trainer(BaseTrainer):
                         t[t_idx][:,window_size//2,window_size//2] = 0.
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
-                y_pred = self.model(t, x, s).float()
+                    if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
+                        feature_mask = torch.ones_like(features)
+                        feature_mask[window_size**2//2] = 0.
+                        features = features * feature_mask
+                if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
+                    y_pred = self.model(t, x, s).float()
+                else:
+                    y_pred = self.model(t, x, s, features, edge_dices).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
         return y_test_pred.detach().cpu().numpy()
 
