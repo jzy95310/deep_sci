@@ -113,6 +113,27 @@ class MLP(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mlp_layers(x)
+    
+    def initialize_weights(self, method: str = "kaiming") -> None:
+        """
+        Initialize weights of the model
+
+        Arguments
+        --------------
+        method: str, the initialization method, default to "kaiming"
+        """
+        if method == "kaiming":
+            for layer in self.mlp_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.kaiming_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+        elif method == "xavier":
+            for layer in self.mlp_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+        else:
+            raise ValueError("Initialization method must be one of ['kaiming', 'xavier']")
 
 
 class ConvNet(nn.Module):
@@ -189,6 +210,35 @@ class ConvNet(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.dense_layers(self.conv_layers(x))
+    
+    def initialize_weights(self, method: str = "kaiming") -> None:
+        """
+        Initialize weights of the model
+
+        Arguments
+        --------------
+        method: str, the initialization method, default to "kaiming"
+        """
+        if method == "kaiming":
+            for layer in self.conv_layers:
+                if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                    nn.init.kaiming_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+            for layer in self.dense_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.kaiming_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+        elif method == "xavier":
+            for layer in self.conv_layers:
+                if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                    nn.init.xavier_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+            for layer in self.dense_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+        else:
+            raise ValueError("Initialization method must be one of ['kaiming', 'xavier']")
 
 
 class DeepKrigingMLP(MLP):

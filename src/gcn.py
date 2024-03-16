@@ -72,3 +72,55 @@ class GCN(nn.Module):
     
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         return self.gcn_layers(x, edge_index)
+    
+    def initialize_weights(self, method: str = 'kaiming') -> None:
+        """
+        Initialize weights of the model
+
+        Arguments
+        --------------
+        method: str, the method to use for weight initialization, default to "kaiming"
+        """
+        if method == 'kaiming':
+            for layer in self.gcn_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.kaiming_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+                elif isinstance(layer, GraphConv):
+                    for param in layer.parameters():
+                        if len(param.shape) > 1:
+                            nn.init.kaiming_normal_(param)
+        elif method == 'xavier':
+            for layer in self.gcn_layers:
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_normal_(layer.weight)
+                    nn.init.zeros_(layer.bias)
+                elif isinstance(layer, GraphConv):
+                    for param in layer.parameters():
+                        if len(param.shape) > 1:
+                            nn.init.xavier_normal_(param)
+        else:
+            raise ValueError("Invalid method for weight initialization")
+
+# ########################################################################################
+# MIT License
+
+# Copyright (c) 2023 Ziyang Jiang
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this 
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify, 
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to 
+# permit persons to whom the Software is furnished to do so, subject to the following 
+# conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies 
+# or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, 
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR 
+# PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE 
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, 
+# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE 
+# OR OTHER DEALINGS IN THE SOFTWARE.
+# ########################################################################################

@@ -349,6 +349,23 @@ class NonlinearSCI(nn.Module):
     def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
         with torch.no_grad():
             return self.forward(t, x, s)
+    
+    def initialize_weights(self, method: str = 'kaiming') -> None:
+        """
+        Initialize weights of the model
+
+        Arguments
+        --------------
+        method: str, the method to use for weight initialization, default to "kaiming"
+        """
+        assert method in {'kaiming','xavier'}, "Invalid method for weight initialization."
+        for i in range(1,self.num_interventions+1):
+            if self.f_network_type in {"mlp","convnet","dk_convnet"}:
+                getattr(self, f"f_{i}").initialize_weights(method=method)
+            else:
+                self.f.initialize_weights(method=method)
+        self.g.initialize_weights(method=method)
+
         
 # ########################################################################################
 # MIT License
