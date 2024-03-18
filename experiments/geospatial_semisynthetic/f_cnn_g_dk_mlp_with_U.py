@@ -60,6 +60,7 @@ def main(args):
         kernel_param_vals=[1.,5e-3,0.1], 
         inducing_point_space=[[0.,1.],[0.,1.]]
     )
+    model.initialize_weights(method="kaiming")
     
     # Experimental tracking
     wandb.init(
@@ -117,7 +118,7 @@ def main(args):
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: CNN, g: DeepKriging with MLP, with unobserved confounder')
-    arg_parser.add_argument('--batch_size', type=int, default=128)
+    arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)

@@ -301,7 +301,7 @@ class Trainer(BaseTrainer):
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
                     if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
                         feature_mask = torch.zeros_like(features)
-                        feature_mask[window_size**2//2] = 1.
+                        feature_mask[features.shape[0]//2] = 1.
                         features = features * feature_mask
                 if not direct:
                     if len(t[t_idx].shape) == 2:
@@ -312,7 +312,7 @@ class Trainer(BaseTrainer):
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
                     if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
                         feature_mask = torch.ones_like(features)
-                        feature_mask[window_size**2//2] = 0.
+                        feature_mask[features.shape[0]//2] = 0.
                         features = features * feature_mask
                 if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
                     y_pred = self.model(t, x, s).float()

@@ -57,11 +57,12 @@ def main(args):
         g_hidden_dims=[128],
         unobserved_confounder=False
     )
+    model.initialize_weights(method="xavier")
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_f_gcn_g_mlp_without_U", 
+        name="geospatial_semi_graphconv_without_U", 
         allow_val_change=True
     )
     config = wandb.config

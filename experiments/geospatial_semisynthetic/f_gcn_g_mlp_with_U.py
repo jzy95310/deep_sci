@@ -60,11 +60,12 @@ def main(args):
         kernel_param_vals=[1.,5e-3,0.1], 
         inducing_point_space=[[0.,1.],[0.,1.]]
     )
+    model.initialize_weights(method="xavier")
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_f_gcn_g_mlp_with_U", 
+        name="geospatial_semi_graphconv_with_U", 
         allow_val_change=True
     )
     config = wandb.config

@@ -168,9 +168,10 @@ class NonlinearSCI(nn.Module):
     **kwargs: dict, additional keyword arguments for f, g, and U
         arguments for f:
         - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
-        - f_dense_hidden_dims: List[int], the dimensions of hidden dense layers for the convolutional neural 
+        - f_dense_hidden_dims: int, the dimensions of hidden dense layers for the convolutional neural 
         network for f, default to 128
         - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
+        - f_stride: int, the stride for the convolutional neural network for f, default to 3
         - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
         - f_activation: str, the activation function to use for the MLP for f, default to "relu"
         - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
@@ -222,19 +223,21 @@ class NonlinearSCI(nn.Module):
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
             f_kernel_size = self.kwargs.get('f_kernel_size', 7)
+            f_stride = self.kwargs.get('f_stride', 3)
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", ConvNet(
-                    self.window_size, self.window_size, f_channels, f_kernel_size, 
+                    self.window_size, self.window_size, f_channels, f_kernel_size, f_stride, 
                     dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
                 ))
         elif self.f_network_type == "dk_convnet":
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
             f_kernel_size = self.kwargs.get('f_kernel_size', 7)
+            f_stride = self.kwargs.get('f_stride', 3)
             f_num_basis = self.kwargs.get('f_num_basis', 4)
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", DeepKrigingConvNet(
-                    self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, 
+                    self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, f_stride, 
                     dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
                 ))
         elif self.f_network_type == "gcn":
@@ -310,9 +313,7 @@ class NonlinearSCI(nn.Module):
         # Masking the center of the intervention variables to be zero
         # TBD: or should we freeze the gradients of the center of the intervention variables?
         if len(t[0].shape) == 2:
-            assert self.f_network_type == self.g_network_type == "mlp", \
-                "1D input is only supported for MLPs."
-            t_mask[self.window_size//2] = 0
+            t_mask[:,self.window_size//2] = 0
         else:
             t_mask[:,self.window_size//2,self.window_size//2] = 0
         for i in range(self.num_interventions):
@@ -325,8 +326,9 @@ class NonlinearSCI(nn.Module):
             if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
             elif self.f_network_type == "gcn":
+                graph_features[graph_features.shape[0]//2,:] = 0.   # zero out the center of the graph features
                 y_t_bar_i = getattr(self, "f")(graph_features, edge_indices).squeeze()
-                y_t_bar_i = y_t_bar_i[self.window_size**2//2].unsqueeze(0)
+                y_t_bar_i = y_t_bar_i[y_t_bar_i.shape[0]//2].unsqueeze(0)
             else:
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
             y_t_bar.append(y_t_bar_i if len(y_t_bar_i.shape) else y_t_bar_i.unsqueeze(0))

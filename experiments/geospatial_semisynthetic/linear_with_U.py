@@ -114,7 +114,7 @@ def main(args):
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='Linear, with unobserved confounder')
-    arg_parser.add_argument('--batch_size', type=int, default=128)
+    arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)

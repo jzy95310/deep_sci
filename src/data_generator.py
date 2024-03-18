@@ -60,12 +60,24 @@ class GraphSpatialDataset(SpatialDataset):
     """
     def __init__(self, t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray) -> None:
         super(GraphSpatialDataset, self).__init__(t, x, s, y)
+        if len(s.shape) == 1 or s.shape[1] == 1:
+            s_dim = 1
+        elif len(s.shape) == 2 and s.shape[1] == 2:
+            s_dim = 2
+        else:
+            raise ValueError("Spatial features must be 1D or 2D")
         window_size = t[0].shape[1]
-        edge = self._generate_edge_indices(window_size)
+        if s_dim == 1:
+            edge = self._generate_edge_indices_1d(window_size)
+        else:
+            edge = self._generate_edge_indices_2d(window_size)
         self.edge_indices = np.array([edge for _ in range(len(t[0]))])
         self.features = []
         for i in tqdm(range(len(t[0])), position=0, leave=True):
-            feat = self._convert_data_to_graph_2d([feat[i] for feat in t])
+            if s_dim == 1:
+                feat = np.array([feat[i] for feat in t])
+            else:
+                feat = self._convert_data_to_graph_2d([feat[i] for feat in t])
             self.features.append(feat)
         self.features = np.array(self.features)
     
@@ -93,8 +105,6 @@ class GraphSpatialDataset(SpatialDataset):
         --------------
         features: np.ndarray, a numpy array containing the features of the nodes, with shape
             (num_nodes, num_interventions)
-        edge_indices: np.ndarray, a numpy array containing the edge indices of the graph, with shape
-            (num_edges, 2)
         """
         features = np.empty((0, len(t)))
         window_size = t[0].shape[1]
@@ -103,16 +113,24 @@ class GraphSpatialDataset(SpatialDataset):
                 feature = np.array([feat[i, j] for feat in t])
                 features = np.vstack((features, feature))
         return features.T
-
-    def _generate_edge_indices(self, window_size) -> np.ndarray:
+    
+    def _generate_edge_indices_1d(self, window_size) -> np.ndarray:
         """
-        Generate the edge indices for the graph convolutional network
+        Generate the edge indices for the graph convolutional network on 1D spatial data
+        """
+        edge_indices = np.empty((0, 2))
+        for i in range(window_size - 1):
+            edge_indices = np.vstack((edge_indices, np.array([i, i + 1])))
+            edge_indices = np.vstack((edge_indices, np.array([i + 1, i])))
+        return edge_indices.T
+
+    def _generate_edge_indices_2d(self, window_size) -> np.ndarray:
+        """
+        Generate the edge indices for the graph convolutional network on 2D spatial data
         """
         edge_indices = np.empty((0, 2))
         directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
 
-        # All nodes are connected to their four neighbors (if they exist), 
-        # except for the nodes on the center of the grid
         for i in range(window_size):
             for j in range(window_size):
                 for direction in directions:
