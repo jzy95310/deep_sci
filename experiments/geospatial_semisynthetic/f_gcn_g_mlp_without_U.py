@@ -53,16 +53,15 @@ def main(args):
         confounder_dim=confounder.shape[-1], 
         f_network_type="gcn",
         g_network_type="mlp",
-        g_num_basis=4, 
         g_hidden_dims=[128],
         unobserved_confounder=False
     )
-    model.initialize_weights(method="xavier")
+    model.initialize_weights(method="kaiming")
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_graphconv_without_U", 
+        name="geospatial_semi_f_gcn_g_mlp_without_U", 
         allow_val_change=True
     )
     config = wandb.config

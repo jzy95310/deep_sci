@@ -52,7 +52,8 @@ def main(args):
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="gcn",
-        g_network_type="mlp",
+        g_network_type="dk_mlp",
+        g_num_basis=4, 
         g_hidden_dims=[128],
         unobserved_confounder=True, 
         kernel_func="rbf", 
@@ -64,7 +65,7 @@ def main(args):
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_f_gcn_g_mlp_with_U", 
+        name="geospatial_semi_f_gcn_g_dk_mlp_with_U", 
         allow_val_change=True
     )
     config = wandb.config
@@ -116,7 +117,7 @@ def main(args):
     })
 
 if __name__ == '__main__':
-    arg_parser = argparse.ArgumentParser(description='f: GCN, g: MLP, with unobserved confounder')
+    arg_parser = argparse.ArgumentParser(description='f: GCN, g: DeepKriging with MLP, with unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
