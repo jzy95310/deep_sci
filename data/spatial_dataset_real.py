@@ -19,8 +19,12 @@ class DurhamDataset():
         with rio.open(os.path.join(dataset_path, 'durham_ndvi.tif')) as src:
             ndvi = src.read(1)
 
+        self.ndvi = ndvi
+        
         with rio.open(os.path.join(dataset_path, 'durham_albedo.tif')) as src:
             albedo = src.read(1)
+
+        self.albedo = albedo
 
         self.window_size = window_size
         self.coords = self.get_coords()
