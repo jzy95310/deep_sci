@@ -17,10 +17,10 @@ from spatial_dataset_semisynthetic import SpatialDataset
 # Experimental tracking
 wandb.login()
 
-np.random.seed(2020)
-torch.manual_seed(2020)
-torch.cuda.manual_seed(2020)
-torch.cuda.manual_seed_all(2020)
+np.random.seed(2023)
+torch.manual_seed(2023)
+torch.cuda.manual_seed(2023)
+torch.cuda.manual_seed_all(2023)
 torch.backends.cudnn.deterministic = True
 
 

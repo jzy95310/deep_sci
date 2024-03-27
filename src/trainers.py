@@ -178,14 +178,14 @@ class Trainer(BaseTrainer):
             if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
                 if samples[4].shape[0] > 1:
                     raise IndexError("When using GCN, the batch size must be set to 1.")
-                features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
+                features, edge_indices = samples[4].squeeze(0), samples[5].squeeze(0)
             # Zero the gradients
             self.optimizer.zero_grad()
             # Forward pass
             if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
                 y_pred = self.model(t, x, s).float()
             else:
-                y_pred = self.model(t, x, s, features, edge_dices).float()
+                y_pred = self.model(t, x, s, features, edge_indices).float()
             assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
             loss = self.loss_fn(y_pred, y.float())
             # Backward pass
@@ -257,11 +257,11 @@ class Trainer(BaseTrainer):
                 samples = self._assign_device_to_data(*batch)
                 t, x, s, y = samples[0], samples[1], samples[2], samples[3].view(-1)
                 if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
-                    features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
+                    features, edge_indices = samples[4].squeeze(0), samples[5].squeeze(0)
                 if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
                     y_pred = self.model(t, x, s).float()
                 else:
-                    y_pred = self.model(t, x, s, features, edge_dices).float()
+                    y_pred = self.model(t, x, s, features, edge_indices).float()
                 y_val_pred = torch.cat((y_val_pred, y_pred), dim=0)
                 y_val_true = torch.cat((y_val_true, y), dim=0)
         assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
@@ -288,7 +288,7 @@ class Trainer(BaseTrainer):
                 samples = self._assign_device_to_data(*batch)
                 t, x, s, _ = samples[0], samples[1], samples[2], samples[3].view(-1)
                 if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
-                    features, edge_dices = samples[4].view(-1,1), samples[5].squeeze()
+                    features, edge_indices = samples[4].squeeze(0), samples[5].squeeze(0)
                 if not indirect:
                     tmp = t[t_idx].clone()
                     if len(t[t_idx].shape) == 2:
@@ -317,7 +317,7 @@ class Trainer(BaseTrainer):
                 if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
                     y_pred = self.model(t, x, s).float()
                 else:
-                    y_pred = self.model(t, x, s, features, edge_dices).float()
+                    y_pred = self.model(t, x, s, features, edge_indices).float()
                 y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
         return y_test_pred.detach().cpu().numpy()
 

@@ -10,9 +10,13 @@ job_dict = {
     1+offset: 'linear_without_U.py', 
     2+offset: 'f_cnn_g_mlp_without_U.py', 
     3+offset: 'f_cnn_g_dk_mlp_without_U.py', 
-    4+offset: 'linear_with_U.py', 
-    5+offset: 'f_cnn_g_mlp_with_U.py', 
-    6+offset: 'f_cnn_g_dk_mlp_with_U.py'
+    4+offset: 'f_gcn_g_mlp_without_U.py', 
+    5+offset: 'f_gcn_g_dk_mlp_without_U.py', 
+    6+offset: 'linear_with_U.py', 
+    7+offset: 'f_cnn_g_mlp_with_U.py', 
+    8+offset: 'f_cnn_g_dk_mlp_with_U.py', 
+    9+offset: 'f_gcn_g_mlp_with_U.py', 
+    10+offset: 'f_gcn_g_dk_mlp_with_U.py'
 }
 
 if JOB_ID not in job_dict:

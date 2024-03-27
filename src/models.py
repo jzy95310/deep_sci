@@ -7,6 +7,7 @@ from torch import nn
 from typing import List
 from nn import MLP, ConvNet, DeepKrigingMLP, DeepKrigingConvNet
 from gcn import GCN
+from unet import UNet
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
 
@@ -162,31 +163,37 @@ class NonlinearSCI(nn.Module):
     num_interventions: int, number of interventions
     window_size: int, grid size for neighboring interventions T_bar
     confounder_dim: int, dimension of the confounder X
-    f_network_type: str, the model type for f, default to "convnet"
-    g_network_type: str, the model type for g, default to "mlp"
+    f_network_type: str, the model type for f, default to "convnet", can be any of {"mlp", "convnet", 
+        "dk_convnet", "gcn", "unet"}
+    g_network_type: str, the model type for g, default to "mlp", can be any of {"mlp", "convnet",
+        "dk_mlp", "dk_convnet"}
     unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
     **kwargs: dict, additional keyword arguments for f, g, and U
         arguments for f:
-        - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
-        - f_dense_hidden_dims: int, the dimensions of hidden dense layers for the convolutional neural 
-        network for f, default to 128
-        - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
-        - f_stride: int, the stride for the convolutional neural network for f, default to 3
-        - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
-        - f_activation: str, the activation function to use for the MLP for f, default to "relu"
-        - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
+            - f_hidden_dims: List[int], the dimensions of hidden layers for the MLP for f, default to [128,64]
+            - f_dense_hidden_dims: int, the dimensions of hidden dense layers for the convolutional neural 
+            network for f, default to 128
+            - f_kernel_size: int, the kernel size for the convolutional neural network for f, default to 7
+            - f_stride: int, the stride for the convolutional neural network for f, default to 3
+            - f_channels: int, number of input channels for the convolutional neural network for f, default to 1
+            - f_activation: str, the activation function to use for the MLP for f, default to "relu"
+            - f_dropout_ratio: float, the dropout ratio for the MLP for f, default to 0.0
+            - f_num_basis: int, number of basis functions for the deep kriging model for f, default to 4
+            - f_depth: int, the depth of the U-Net model for f, default to 2
+            - f_padding: int, the padding size for the U-Net model for f, default to 1
         arguments for g:
-        - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
-        - g_dense_hidden_dims: List[int], the dimensions of hidden dense layers for the convolutional neural
-        network for g, default to 128
-        - g_kernel_size: int, the kernel size for the convolutional neural network for g, default to 7
-        - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
-        - g_activation: str, the activation function to use for the MLP for g, default to "relu"
-        - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
+            - g_hidden_dims: List[int], the dimensions of hidden layers for the MLP for g, default to [128,64]
+            - g_dense_hidden_dims: List[int], the dimensions of hidden dense layers for the convolutional neural
+            network for g, default to 128
+            - g_kernel_size: int, the kernel size for the convolutional neural network for g, default to 7
+            - g_channels: int, number of input channels for the convolutional neural network for g, default to 1
+            - g_activation: str, the activation function to use for the MLP for g, default to "relu"
+            - g_dropout_ratio: float, the dropout ratio for the MLP for g, default to 0.0
+            - g_num_basis: int, number of basis functions for the deep kriging model for g, default to 4
         arguments for U:
-        - kernel_func: str, the kernel function to use for the ICK model
-        - kernel_param_vals: List[float], the initial values for the kernel parameters
-        - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
+            - kernel_func: str, the kernel function to use for the ICK model
+            - kernel_param_vals: List[float], the initial values for the kernel parameters
+            - inducing_point_space: List[List[float]], the space of the inducing points for Nystrom approximation
     """
     def __init__(self, num_interventions: int, window_size: int, confounder_dim: int = None, f_network_type: str = "mlp", 
                  g_network_type: str = "mlp", unobserved_confounder: bool = False, **kwargs) -> None:
@@ -214,11 +221,16 @@ class NonlinearSCI(nn.Module):
         for i in range(1,self.num_interventions+1):
             setattr(self, f"beta_{i}", nn.Parameter(torch.randn(1)))
         # model for f(T_bar)
+        f_batch_norm = self.kwargs.get('f_batch_norm', False)
         f_activation = self.kwargs.get('f_activation', 'relu')
+        f_dropout_ratio = self.kwargs.get('f_dropout_ratio', 0.0)
         if self.f_network_type == "mlp":
             f_hidden_dims = self.kwargs.get('f_hidden_dims', [128,64])
             for i in range(1,self.num_interventions+1):
-                setattr(self, f"f_{i}", MLP(self.window_size, len(f_hidden_dims), f_hidden_dims, activation=f_activation))
+                setattr(self, f"f_{i}", MLP(
+                    self.window_size, len(f_hidden_dims), f_hidden_dims, 
+                    batch_norm=f_batch_norm, p_dropout=f_dropout_ratio, activation=f_activation
+                ))
         elif self.f_network_type == "convnet":
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
             f_channels = self.kwargs.get('f_channels', 1)
@@ -227,7 +239,8 @@ class NonlinearSCI(nn.Module):
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", ConvNet(
                     self.window_size, self.window_size, f_channels, f_kernel_size, f_stride, 
-                    dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
+                    dense_hidden_dim=f_dense_hidden_dims, batch_norm=f_batch_norm, 
+                    p_dropout=f_dropout_ratio, activation=f_activation
                 ))
         elif self.f_network_type == "dk_convnet":
             f_dense_hidden_dims = self.kwargs.get('f_dense_hidden_dims', 128)
@@ -238,33 +251,45 @@ class NonlinearSCI(nn.Module):
             for i in range(1,self.num_interventions+1):
                 setattr(self, f"f_{i}", DeepKrigingConvNet(
                     self.window_size, self.window_size, f_num_basis, f_channels, f_kernel_size, f_stride, 
-                    dense_hidden_dim=f_dense_hidden_dims, activation=f_activation
+                    dense_hidden_dim=f_dense_hidden_dims, batch_norm=f_batch_norm, p_dropout=f_dropout_ratio, 
+                    activation=f_activation
                 ))
         elif self.f_network_type == "gcn":
             f_hidden_dims = self.kwargs.get('f_hidden_dims', 16)
             f_num_hidden_layers = self.kwargs.get('f_num_hidden_layers', 1)
             setattr(self, "f", GCN(self.num_interventions, f_num_hidden_layers, f_hidden_dims, 
                                    activation=f_activation))
+        elif self.f_network_type == "unet":
+            f_depth = self.kwargs.get('f_depth', 2)
+            f_padding = self.kwargs.get('f_padding', 1)
+            for i in range(1,self.num_interventions+1):
+                setattr(self, f"f_{i}", UNet(1, 1, depth=f_depth, padding=f_padding, batch_norm=f_batch_norm, 
+                                             p_dropout=f_dropout_ratio))
         else:
             raise Exception(f"Invalid network type for f: {self.f_network_type}")
         # model for g(X)
+        g_batch_norm = self.kwargs.get('g_batch_norm', False)
         g_activation = self.kwargs.get('g_activation', 'relu')
+        g_dropout_ratio = self.kwargs.get('g_dropout_ratio', 0.0)
         if self.g_network_type == "mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
-            self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, activation=g_activation)
+            self.g = MLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, 
+                         batch_norm=g_batch_norm, p_dropout=g_dropout_ratio, activation=g_activation)
         elif self.g_network_type == "convnet":
             g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
             g_kernel_size = self.kwargs.get('g_kernel_size', 7)
             self.g = ConvNet(
                 self.window_size, self.window_size, g_channels, g_kernel_size, 
-                dense_hidden_dim=g_dense_hidden_dims, activation=g_activation
+                dense_hidden_dim=g_dense_hidden_dims, batch_norm=g_batch_norm, 
+                p_dropout=g_dropout_ratio, activation=g_activation
             )
         elif self.g_network_type == "dk_mlp":
             g_hidden_dims = self.kwargs.get('g_hidden_dims', [128,64])
             g_num_basis = self.kwargs.get('g_num_basis', 4)
             self.g = DeepKrigingMLP(self.confounder_dim, len(g_hidden_dims), g_hidden_dims, 
-                                    g_num_basis, activation=g_activation)
+                                    g_num_basis, batch_norm=g_batch_norm, 
+                                    p_dropout=g_dropout_ratio, activation=g_activation)
         elif self.g_network_type == "dk_convnet":
             g_dense_hidden_dims = self.kwargs.get('g_dense_hidden_dims', 128)
             g_channels = self.kwargs.get('g_channels', 1)
@@ -272,7 +297,8 @@ class NonlinearSCI(nn.Module):
             g_num_basis = self.kwargs.get('g_num_basis', 4)
             self.g = DeepKrigingConvNet(
                 self.window_size, self.window_size, g_num_basis, g_channels, g_kernel_size, 
-                dense_hidden_dim=g_dense_hidden_dims, activation=g_activation
+                dense_hidden_dim=g_dense_hidden_dims, batch_norm=g_batch_norm, 
+                p_dropout=g_dropout_ratio, activation=g_activation
             )
         else:
             raise Exception(f"Invalid network type for g: {self.g_network_type}")
@@ -326,7 +352,6 @@ class NonlinearSCI(nn.Module):
             if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
             elif self.f_network_type == "gcn":
-                graph_features[graph_features.shape[0]//2,:] = 0.   # zero out the center of the graph features
                 y_t_bar_i = getattr(self, "f")(graph_features, edge_indices).squeeze()
                 y_t_bar_i = y_t_bar_i[y_t_bar_i.shape[0]//2].unsqueeze(0)
             else:
@@ -348,9 +373,10 @@ class NonlinearSCI(nn.Module):
             s = s.unsqueeze(1)
         return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
     
-    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
         with torch.no_grad():
-            return self.forward(t, x, s)
+            return self.forward(t, x, s, graph_features, edge_indices)
     
     def initialize_weights(self, method: str = 'kaiming') -> None:
         """
@@ -362,7 +388,7 @@ class NonlinearSCI(nn.Module):
         """
         assert method in {'kaiming','xavier'}, "Invalid method for weight initialization."
         for i in range(1,self.num_interventions+1):
-            if self.f_network_type in {"mlp","convnet","dk_convnet"}:
+            if self.f_network_type in {"mlp","convnet","dk_convnet","unet"}:
                 getattr(self, f"f_{i}").initialize_weights(method=method)
             else:
                 self.f.initialize_weights(method=method)

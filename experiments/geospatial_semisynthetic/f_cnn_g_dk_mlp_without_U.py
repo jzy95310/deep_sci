@@ -17,10 +17,10 @@ from spatial_dataset_semisynthetic import SpatialDataset
 # Experimental tracking
 wandb.login()
 
-np.random.seed(2020)
-torch.manual_seed(2020)
-torch.cuda.manual_seed(2020)
-torch.cuda.manual_seed_all(2020)
+np.random.seed(2023)
+torch.manual_seed(2023)
+torch.cuda.manual_seed(2023)
+torch.cuda.manual_seed_all(2023)
 torch.backends.cudnn.deterministic = True
 
 
@@ -52,9 +52,12 @@ def main(args):
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="convnet", 
+        f_batch_norm=False, 
+        f_dropout_ratio=0.1, 
         g_network_type="dk_mlp",
         g_num_basis=4, 
         g_hidden_dims=[128],
+        g_dropout_ratio=0.1, 
         unobserved_confounder=False
     )
     model.initialize_weights(method="kaiming")

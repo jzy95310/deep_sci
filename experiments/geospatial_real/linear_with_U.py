@@ -93,8 +93,8 @@ def main(args):
         height, width = test_data['height'], test_data['width']
         
     window_size = interventions[0].shape[-1]
-    padding_h, padding_w = (height+1-1500)//2, (width+1-1500)//2
-    de_map, ie_map, te_map = [], [], []
+    padding_h, padding_w = (height+1-1000)//2, (width+1-1000)//2
+    de_map_ndvi, de_map_albedo, ie_map_ndvi, ie_map_albedo, te_map = [], [], [], [], []
     with torch.no_grad():
         for i in tqdm(range(padding_h, height-padding_h+1),position=0,leave=True):
             batch = [[torch.empty(0).to(device)]*len(interventions),torch.empty(0).to(device),torch.empty(0).to(device)]
@@ -111,27 +111,38 @@ def main(args):
                 del sample, s, nlcd, ndvi, albedo
             y_pred_11 = model.predict(*batch).cpu().numpy()
             y_pred_11 = scaler.inverse_transform(y_pred_11.reshape(-1,1)).squeeze()
-            for i in range(len(batch[0])):
-                batch[0][i][:,window_size//2,window_size//2] = 0.
-            y_pred_01 = model.predict(*batch).cpu().numpy()
-            y_pred_01 = scaler.inverse_transform(y_pred_01.reshape(-1,1)).squeeze()
+            # ndvi: batch[0][0]
+            tmp = batch[0][0][:,window_size//2,window_size//2]
+            batch[0][0][:,window_size//2,window_size//2] = 0.
+            y_pred_01_ndvi = model.predict(*batch).cpu().numpy()
+            y_pred_01_ndvi = scaler.inverse_transform(y_pred_01_ndvi.reshape(-1,1)).squeeze()
+            batch[0][0][:,window_size//2,window_size//2] = tmp
+            # albedo: batch[0][1]
+            batch[0][1][:,window_size//2,window_size//2] = 0.
+            y_pred_01_albedo = model.predict(*batch).cpu().numpy()
+            y_pred_01_albedo = scaler.inverse_transform(y_pred_01_albedo.reshape(-1,1)).squeeze()
             for i in range(len(batch[0])):
                 batch[0][i] = torch.zeros_like(batch[0][i])
             y_pred_00 = model.predict(*batch).cpu().numpy()
             y_pred_00 = scaler.inverse_transform(y_pred_00.reshape(-1,1)).squeeze()
-            de_map.append(y_pred_11 - y_pred_01)
-            ie_map.append(y_pred_01 - y_pred_00)
+            de_map_ndvi.append(y_pred_11 - y_pred_01_ndvi)
+            de_map_albedo.append(y_pred_11 - y_pred_01_albedo)
+            ie_map_ndvi.append(y_pred_01_ndvi - y_pred_00)
+            ie_map_albedo.append(y_pred_01_albedo - y_pred_00)
             te_map.append(y_pred_11 - y_pred_00)
     
-    de_map, ie_map, te_map = np.array(de_map), np.array(ie_map), np.array(te_map)
+    de_map_ndvi, de_map_albedo = np.array(de_map_ndvi), np.array(de_map_albedo)
+    ie_map_ndvi, ie_map_albedo = np.array(ie_map_ndvi), np.array(ie_map_albedo)
+    te_map = np.array(te_map)
     os.makedirs('./results', exist_ok=True)
-    result = {'de': de_map, 'ie': ie_map, 'te': te_map}
+    result = {'de_ndvi': de_map_ndvi, 'de_albedo': de_map_albedo, 
+              'ie_ndvi': ie_map_ndvi, 'ie_albedo': ie_map_albedo, 'te': te_map}
     with open('./results/results_linear_with_U.pkl', 'wb') as f:
         pkl.dump(result, f)
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='Linear, with unobserved confounder')
-    arg_parser.add_argument('--batch_size', type=int, default=128)
+    arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)

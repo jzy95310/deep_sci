@@ -68,18 +68,20 @@ class GraphSpatialDataset(SpatialDataset):
             raise ValueError("Spatial features must be 1D or 2D")
         window_size = t[0].shape[1]
         if s_dim == 1:
-            edge = self._generate_edge_indices_1d(window_size)
+            edge = generate_edge_indices_1d(window_size)
         else:
-            edge = self._generate_edge_indices_2d(window_size)
-        self.edge_indices = np.array([edge for _ in range(len(t[0]))])
+            edge = generate_edge_indices_2d(window_size)
+        if len(t[0]) > 0:
+            self.edge_indices = np.array([edge for _ in range(len(t[0]))])
         self.features = []
         for i in tqdm(range(len(t[0])), position=0, leave=True):
             if s_dim == 1:
                 feat = np.array([feat[i] for feat in t])
             else:
-                feat = self._convert_data_to_graph_2d([feat[i] for feat in t])
+                feat = convert_data_to_graph_2d([feat[i] for feat in t])
             self.features.append(feat)
-        self.features = np.array(self.features)
+        if len(t[0]) > 0:
+            self.features = np.transpose(np.array(self.features),(0,2,1))
     
     def __getitem__(self, idx) -> Tuple:
         if torch.is_tensor(idx):
@@ -92,53 +94,53 @@ class GraphSpatialDataset(SpatialDataset):
             torch.from_numpy(self.edge_indices[idx]).long()
         return batch
 
-    def _convert_data_to_graph_2d(self, t: List[np.ndarray]) -> np.ndarray:
-        """
-        Convert the input data to a 2D graph for graph convolutional network
+def convert_data_to_graph_2d(t: List[np.ndarray]) -> np.ndarray:
+    """
+    Convert the input data to a 2D graph for graph convolutional network
 
-        Arguments
-        --------------
-        t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
-            (window_size, window_size)
-        
-        Returns
-        --------------
-        features: np.ndarray, a numpy array containing the features of the nodes, with shape
-            (num_nodes, num_interventions)
-        """
-        features = np.empty((0, len(t)))
-        window_size = t[0].shape[1]
-        for i in range(window_size):
-            for j in range(window_size):
-                feature = np.array([feat[i, j] for feat in t])
-                features = np.vstack((features, feature))
-        return features.T
+    Arguments
+    --------------
+    t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
+        (window_size, window_size)
     
-    def _generate_edge_indices_1d(self, window_size) -> np.ndarray:
-        """
-        Generate the edge indices for the graph convolutional network on 1D spatial data
-        """
-        edge_indices = np.empty((0, 2))
-        for i in range(window_size - 1):
-            edge_indices = np.vstack((edge_indices, np.array([i, i + 1])))
-            edge_indices = np.vstack((edge_indices, np.array([i + 1, i])))
-        return edge_indices.T
+    Returns
+    --------------
+    features: np.ndarray, a numpy array containing the features of the nodes, with shape
+        (num_nodes, num_interventions)
+    """
+    features = np.empty((0, len(t)))
+    window_size = t[0].shape[1]
+    for i in range(window_size):
+        for j in range(window_size):
+            feature = np.array([feat[i, j] for feat in t])
+            features = np.vstack((features, feature))
+    return features.T
 
-    def _generate_edge_indices_2d(self, window_size) -> np.ndarray:
-        """
-        Generate the edge indices for the graph convolutional network on 2D spatial data
-        """
-        edge_indices = np.empty((0, 2))
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+def generate_edge_indices_1d(window_size) -> np.ndarray:
+    """
+    Generate the edge indices for the graph convolutional network on 1D spatial data
+    """
+    edge_indices = np.empty((0, 2))
+    for i in range(window_size - 1):
+        edge_indices = np.vstack((edge_indices, np.array([i, i + 1])))
+        edge_indices = np.vstack((edge_indices, np.array([i + 1, i])))
+    return edge_indices.T
 
-        for i in range(window_size):
-            for j in range(window_size):
-                for direction in directions:
-                    new_i, new_j = i + direction[0], j + direction[1]
-                    if 0 <= new_i < window_size and 0 <= new_j < window_size and new_i != window_size // 2 and new_j != window_size // 2:
-                        edge_indices = np.vstack((edge_indices, np.array([i * window_size + j, new_i * window_size + new_j])))
-                        edge_indices = np.vstack((edge_indices, np.array([new_i * window_size + new_j, i * window_size + j]))) 
-        return edge_indices.T
+def generate_edge_indices_2d(window_size) -> np.ndarray:
+    """
+    Generate the edge indices for the graph convolutional network on 2D spatial data
+    """
+    edge_indices = np.empty((0, 2))
+    directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+
+    for i in range(window_size):
+        for j in range(window_size):
+            for direction in directions:
+                new_i, new_j = i + direction[0], j + direction[1]
+                if 0 <= new_i < window_size and 0 <= new_j < window_size and new_i != window_size // 2 and new_j != window_size // 2:
+                    edge_indices = np.vstack((edge_indices, np.array([i * window_size + j, new_i * window_size + new_j])))
+                    edge_indices = np.vstack((edge_indices, np.array([new_i * window_size + new_j, i * window_size + j]))) 
+    return edge_indices.T
 
 def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, train_size: float = 0.7,
                          val_size: float = 0.15, test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020, 

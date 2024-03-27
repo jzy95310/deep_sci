@@ -17,10 +17,10 @@ from spatial_dataset_semisynthetic import SpatialDataset
 # Experimental tracking
 wandb.login()
 
-np.random.seed(2020)
-torch.manual_seed(2020)
-torch.cuda.manual_seed(2020)
-torch.cuda.manual_seed_all(2020)
+np.random.seed(2023)
+torch.manual_seed(2023)
+torch.cuda.manual_seed(2023)
+torch.cuda.manual_seed_all(2023)
 torch.backends.cudnn.deterministic = True
 
 
@@ -74,7 +74,7 @@ def main(args):
     optim = args.optim_name
     optim_params = {
         'lr': args.lr,
-        'momentum': args.momentum
+        # 'momentum': args.momentum
     }
     epochs, patience = args.n_epochs, args.patience
     trainer = Trainer(
@@ -118,8 +118,8 @@ def main(args):
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: GCN, g: MLP, with unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=1)
-    arg_parser.add_argument('--optim_name', type=str, default="sgd")
-    arg_parser.add_argument('--lr', type=float, default=1e-5)
+    arg_parser.add_argument('--optim_name', type=str, default="adam")
+    arg_parser.add_argument('--lr', type=float, default=5e-5)
     arg_parser.add_argument('--momentum', type=float, default=0.99)
     arg_parser.add_argument('--weight_decay', type=float, default=0.0)
     arg_parser.add_argument('--n_epochs', type=int, default=1000)

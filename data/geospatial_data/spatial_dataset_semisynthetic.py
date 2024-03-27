@@ -38,7 +38,6 @@ class SpatialDataset:
 
         with rio.open(os.path.join(dataset_path, "durham_ndvi.tif")) as src:
             ndvi = src.read(1)
-        ndvi = np.flipud(ndvi)
 
         with rio.open(os.path.join(dataset_path, "durham_synth_unobs_confound.tif")) as src:
             U = src.read(1)
