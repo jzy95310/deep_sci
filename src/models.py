@@ -318,9 +318,27 @@ class NonlinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
-                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
+    def forward_direct(self, t: List[torch.Tensor]) -> List:
         """
+        Calculate the resulting outcome directly from the interventions
+
+        t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
+            (batch_size, window_size) or (batch_size, window_size, window_size)
+        """
+        y_t = []
+        for i in range(self.num_interventions):
+            if len(t[i].shape) == 2:
+                ti = t[i][:,self.window_size//2]
+            else:
+                ti = t[i][:,self.window_size//2,self.window_size//2]
+            y_t.append(ti * getattr(self, f"beta_{i+1}"))
+        return y_t
+    
+    def forward_residual(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                         graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> Tuple:
+        """
+        Calculate the residuals from the neighboring interventions and the confounder variables
+
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
             (batch_size, window_size) or (batch_size, window_size, window_size)
         x: torch.Tensor, a tensor containing the confounder variable with shape (batch_size, confounder_dim) or
@@ -334,7 +352,7 @@ class NonlinearSCI(nn.Module):
         if self.f_network_type == "gcn":
             assert graph_features is not None and edge_indices is not None, \
                 "Graph features and edge indices are required for the GCN model."
-        y_t, y_t_bar, y_x = [], [], []
+        y_t_bar, y_x = [], []
         t_mask = torch.ones_like(t[0])
         # Masking the center of the intervention variables to be zero
         # TBD: or should we freeze the gradients of the center of the intervention variables?
@@ -343,12 +361,7 @@ class NonlinearSCI(nn.Module):
         else:
             t_mask[:,self.window_size//2,self.window_size//2] = 0
         for i in range(self.num_interventions):
-            if len(t[i].shape) == 2:
-                ti = t[i][:,self.window_size//2]
-            else:
-                ti = t[i][:,self.window_size//2,self.window_size//2]
-            y_t.append(ti * getattr(self, f"beta_{i+1}"))
-            ti_bar = (t[i] * t_mask).unsqueeze(1)     # broadcasting
+            ti_bar = (t[i] * t_mask).unsqueeze(1)
             if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
             elif self.f_network_type == "gcn":
@@ -368,10 +381,23 @@ class NonlinearSCI(nn.Module):
         elif self.g_network_type == "dk_convnet":
             y_x_i = self.g(x, s).squeeze()
         y_x.append(y_x_i if len(y_x_i.shape) else y_x_i.unsqueeze(0))
-        output = torch.sum(torch.stack(y_t + y_t_bar + y_x), dim=0)
-        if self.unobserved_confounder and len(s.shape) == 1:
-            s = s.unsqueeze(1)
-        return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
+        res = (y_t_bar, y_x)
+        if self.unobserved_confounder:
+            if len(s.shape) == 1:
+                s = s.unsqueeze(1)
+            res += ([self.gp_unobserved_confounder([s])],)
+        return res
+    
+    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
+        y_t = self.forward_direct(t)
+        if not self.unobserved_confounder:
+            y_t_bar, y_x = self.forward_residual(t, x, s, graph_features, edge_indices)
+            output = torch.sum(torch.stack(y_t + y_t_bar + y_x), dim=0)
+        else:
+            y_t_bar, y_x, u = self.forward_residual(t, x, s, graph_features, edge_indices)
+            output = torch.sum(torch.stack(y_t + y_t_bar + y_x + u), dim=0)
+        return output
     
     def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
                 graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
@@ -393,6 +419,54 @@ class NonlinearSCI(nn.Module):
             else:
                 self.f.initialize_weights(method=method)
         self.g.initialize_weights(method=method)
+    
+    def freeze_direct_weights(self) -> None:
+        """
+        Freeze the weights for direct interventions
+        """
+        for i in range(1,self.num_interventions+1):
+            getattr(self, f"beta_{i}").requires_grad = False
+    
+    def unfreeze_direct_weights(self) -> None:
+        """
+        Unfreeze the weights for direct interventions
+        """
+        for i in range(1,self.num_interventions+1):
+            getattr(self, f"beta_{i}").requires_grad = True
+    
+    def freeze_residual_weights(self) -> None:
+        """
+        Freeze the weights for the residual interventions
+        """
+        if self.f_network_type == "gcn":
+            for param in self.f.parameters():
+                param.requires_grad = False
+        else:
+            for i in range(1,self.num_interventions+1):
+                for param in getattr(self, f"f_{i}").parameters():
+                    param.requires_grad = False
+        for param in self.g.parameters():
+            param.requires_grad = False
+        if self.unobserved_confounder:
+            for param in self.gp_unobserved_confounder.parameters():
+                param.requires_grad = False
+    
+    def unfreeze_residual_weights(self) -> None:
+        """
+        Unfreeze the weights for the residual interventions
+        """
+        if self.f_network_type == "gcn":
+            for param in self.f.parameters():
+                param.requires_grad = True
+        else:
+            for i in range(1,self.num_interventions+1):
+                for param in getattr(self, f"f_{i}").parameters():
+                    param.requires_grad = True
+        for param in self.g.parameters():
+            param.requires_grad = True
+        if self.unobserved_confounder:
+            for param in self.gp_unobserved_confounder.parameters():
+                param.requires_grad = True
 
         
 # ########################################################################################

@@ -8,6 +8,7 @@ import time
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple
+from functools import reduce
 from models import LinearSCI, NonlinearSCI
 
 TRAIN = 'train'
@@ -133,14 +134,14 @@ class BaseTrainer(ABC):
     @abstractmethod
     def train(self) -> None:
         """
-        Train the ICK model
+        Model training
         """
         pass
 
     @abstractmethod
     def predict(self) -> None:
         """
-        Evaluate the ICK model on the test data
+        Model evaluation
         """
         pass
 
@@ -151,8 +152,9 @@ class Trainer(BaseTrainer):
     def __init__(self, model: torch.nn.Module, data_generators: Dict, optim: str, optim_params: Dict,
                  lr_scheduler: torch.optim.lr_scheduler._LRScheduler = None, model_save_dir: str = None, model_name: str = 'model.pt', 
                  loss_fn: torch.nn.modules.loss._Loss = torch.nn.MSELoss(), device: torch.device = torch.device('cpu'), 
-                 epochs: int = 100, patience: int = 10, logger: logging.Logger = logging.getLogger("Trainer"), 
-                 wandb: object = None) -> None:
+                 epochs: int = 100, patience: int = 10, residual_learning: bool = False, 
+                 logger: logging.Logger = logging.getLogger("Trainer"), wandb: object = None) -> None:
+        self.residual_loss: torch.nn.modules.loss._Loss = torch.nn.MSELoss() if residual_learning else None
         super(Trainer, self).__init__(model, data_generators, optim, optim_params, lr_scheduler, model_save_dir, model_name, 
                                       loss_fn, device, epochs, patience, logger, wandb)
         self._validate_inputs()
@@ -179,21 +181,48 @@ class Trainer(BaseTrainer):
                 if samples[4].shape[0] > 1:
                     raise IndexError("When using GCN, the batch size must be set to 1.")
                 features, edge_indices = samples[4].squeeze(0), samples[5].squeeze(0)
-            # Zero the gradients
             self.optimizer.zero_grad()
-            # Forward pass
-            if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
-                y_pred = self.model(t, x, s).float()
+            if self.residual_loss is None:
+                # Forward pass
+                if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
+                    y_pred = self.model(t, x, s).float()
+                else:
+                    y_pred = self.model(t, x, s, features, edge_indices).float()
+                assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
+                loss = self.loss_fn(y_pred, y.float())
+                # Backward pass
+                loss.backward()
+                self.optimizer.step()
+                # Record the predictions
+                y_train_pred = torch.cat((y_train_pred, y_pred), dim=0)
+                y_train_true = torch.cat((y_train_true, y), dim=0)
             else:
-                y_pred = self.model(t, x, s, features, edge_indices).float()
-            assert y_pred.shape == y.shape, "The shape of the prediction must be the same as the target"
-            loss = self.loss_fn(y_pred, y.float())
-            # Backward pass
-            loss.backward()
-            self.optimizer.step()
-            # Record the predictions
-            y_train_pred = torch.cat((y_train_pred, y_pred), dim=0)
-            y_train_true = torch.cat((y_train_true, y), dim=0)
+                # Forward pass of direct effect on the outcome
+                self.model.unfreeze_direct_weights()
+                self.model.freeze_residual_weights()
+                y_direct = torch.sum(torch.stack(self.model.forward_direct(t)), dim=0)
+                loss_direct = self.loss_fn(y_direct, y.float())
+                # Backward pass of direct effect on the outcome
+                loss_direct.backward(retain_graph=True)
+                self.optimizer.step()
+                # Zero the gradients
+                self.optimizer.zero_grad()
+                # Forward pass of the residual effect on the outcome
+                self.model.unfreeze_residual_weights()
+                self.model.freeze_direct_weights()
+                if not hasattr(self.model,'f_network_type') or self.model.f_network_type != 'gcn':
+                    residual_comps = self.model.forward_residual(t, x, s)
+                else:
+                    residual_comps = self.model.forward_residual(t, x, s, features, edge_indices)
+                y_residual = torch.sum(torch.stack(reduce(lambda a, b: a+b, residual_comps)), dim=0).float()
+                loss_residual = self.residual_loss(y_residual, (y - y_direct).float())
+                # Backward pass of the residual effect on the outcome
+                loss_residual.backward()
+                self.optimizer.step()
+                # Record the predictions
+                y_train_pred = torch.cat((y_train_pred, y_direct + y_residual), dim=0)
+                y_train_true = torch.cat((y_train_true, y), dim=0)
+
         train_loss = self.loss_fn(y_train_pred, y_train_true).item()
         return train_loss, step
     

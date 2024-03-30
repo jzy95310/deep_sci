@@ -53,20 +53,20 @@ def main(args):
         confounder_dim=confounder.shape[-1], 
         f_network_type="convnet", 
         f_batch_norm=False, 
-        f_dropout_ratio=0.1, 
+        f_dropout_ratio=0.0, 
         g_network_type="dk_mlp",
         g_num_basis=4, 
         g_hidden_dims=[128],
-        g_dropout_ratio=0.1, 
+        g_dropout_ratio=0.0, 
         unobserved_confounder=False
     )
-    model.initialize_weights(method="kaiming")
+    model.initialize_weights(method="xavier")
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
         name="geospatial_semi_f_cnn_g_dk_mlp_without_U", 
-        allow_val_change=True
+        allow_val_change=False
     )
     config = wandb.config
     
@@ -86,7 +86,8 @@ def main(args):
         device=device,
         epochs=epochs,
         patience=patience, 
-        wandb=wandb
+        wandb=wandb, 
+        residual_learning=True
     )
     trainer.train()
     
@@ -120,7 +121,7 @@ if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: CNN, g: DeepKriging with MLP, without unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
-    arg_parser.add_argument('--lr', type=float, default=1e-5)
+    arg_parser.add_argument('--lr', type=float, default=1e-6)
     arg_parser.add_argument('--momentum', type=float, default=0.99)
     arg_parser.add_argument('--weight_decay', type=float, default=0.0)
     arg_parser.add_argument('--n_epochs', type=int, default=1000)

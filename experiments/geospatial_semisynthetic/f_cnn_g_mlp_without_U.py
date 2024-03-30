@@ -53,13 +53,13 @@ def main(args):
         confounder_dim=confounder.shape[-1], 
         f_network_type="convnet", 
         f_batch_norm=False, 
-        f_dropout_ratio=0.1, 
+        f_dropout_ratio=0.0, 
         g_network_type="mlp", 
         g_hidden_dims=[128], 
-        g_dropout_ratio=0.1, 
+        g_dropout_ratio=0.0, 
         unobserved_confounder=False
     )
-    model.initialize_weights(method="kaiming")
+    model.initialize_weights(method="xavier")
     
     # Experimental tracking
     wandb.init(
@@ -85,7 +85,8 @@ def main(args):
         device=device,
         epochs=epochs,
         patience=patience, 
-        wandb=wandb
+        wandb=wandb, 
+        residual_learning=False
     )
     trainer.train()
     
@@ -119,7 +120,7 @@ if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: CNN, g: MLP, without unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
-    arg_parser.add_argument('--lr', type=float, default=1e-5)
+    arg_parser.add_argument('--lr', type=float, default=1e-6)
     arg_parser.add_argument('--momentum', type=float, default=0.99)
     arg_parser.add_argument('--weight_decay', type=float, default=0.0)
     arg_parser.add_argument('--n_epochs', type=int, default=1000)
