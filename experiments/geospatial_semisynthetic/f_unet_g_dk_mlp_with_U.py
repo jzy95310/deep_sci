@@ -52,7 +52,7 @@ def main(args):
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
         f_network_type="unet",
-        f_depth=2, 
+        f_depth=3, 
         f_batch_norm=False, 
         f_padding=1, 
         f_dropout_ratio=0.0, 
