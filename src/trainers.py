@@ -297,7 +297,7 @@ class Trainer(BaseTrainer):
         val_loss = self.loss_fn(y_val_pred, y_val_true).item()
         return val_loss
     
-    def predict(self, window_size: int, direct: bool, indirect: bool, t_idx: int = 0) -> None:
+    def predict(self, window_size: int, direct: bool, indirect: bool, t_idx: int = 0, baseline: float = 0.0) -> None:
         """
         Evaluate the model on the test data
 
@@ -310,6 +310,7 @@ class Trainer(BaseTrainer):
         t_idx: int, the index of the intervention to use for prediction
         """
         y_test_pred = torch.empty(0).to(self.device)
+        baseline = torch.tensor(baseline).to(self.device)
         self.model.eval()
 
         with torch.no_grad():
@@ -321,10 +322,10 @@ class Trainer(BaseTrainer):
                 if not indirect:
                     tmp = t[t_idx].clone()
                     if len(t[t_idx].shape) == 2:
-                        t[t_idx] = torch.zeros_like(t[t_idx])
+                        t[t_idx] = torch.ones_like(t[t_idx]) * baseline
                         t[t_idx][:,window_size//2] = tmp[:,window_size//2]
                     elif len(t[t_idx].shape) == 3:
-                        t[t_idx] = torch.zeros_like(t[t_idx])
+                        t[t_idx] = torch.ones_like(t[t_idx]) * baseline
                         t[t_idx][:,window_size//2,window_size//2] = tmp[:,window_size//2,window_size//2]
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
@@ -334,9 +335,9 @@ class Trainer(BaseTrainer):
                         features = features * feature_mask
                 if not direct:
                     if len(t[t_idx].shape) == 2:
-                        t[t_idx][:,window_size//2] = 0.
+                        t[t_idx][:,window_size//2] = baseline
                     elif len(t[t_idx].shape) == 3:
-                        t[t_idx][:,window_size//2,window_size//2] = 0.
+                        t[t_idx][:,window_size//2,window_size//2] = baseline
                     else:
                         raise ValueError(f"Intervention shape {t.shape} not supported.")
                     if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
