@@ -103,7 +103,8 @@ class LinearSCI(nn.Module):
             }
             self.gp_unobserved_confounder = ICK(kernel_assignment, kernel_params)
     
-    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                return_components: bool = False) -> torch.Tensor:
         """
         t: List[torch.Tensor], a list of tensors containing the intervention variables with shape 
             (batch_size, window_size) or (batch_size, window_size, window_size)
@@ -143,11 +144,16 @@ class LinearSCI(nn.Module):
         output = torch.sum(torch.stack(y_t + y_t_bar + y_x), dim=0)
         if self.unobserved_confounder and len(s.shape) == 1:
             s = s.unsqueeze(1)
-        return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
+        if not return_components:
+            return output if not self.unobserved_confounder else (output + self.gp_unobserved_confounder([s]))
+        else:
+            return (y_t,) + (y_t_bar,) + (y_x,) + ([self.gp_unobserved_confounder([s])],) if self.unobserved_confounder \
+                else (y_t,) + (y_t_bar,) + (y_x,)
     
-    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None) -> torch.Tensor:
+    def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
+                return_components: bool = False) -> torch.Tensor:
         with torch.no_grad():
-            return self.forward(t, x, s)
+            return self.forward(t, x, s, return_components)
 
 
 class NonlinearSCI(nn.Module):
@@ -389,7 +395,8 @@ class NonlinearSCI(nn.Module):
         return res
     
     def forward(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
-                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
+                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None, 
+                return_components: bool = False) -> torch.Tensor:
         y_t = self.forward_direct(t)
         if not self.unobserved_confounder:
             y_t_bar, y_x = self.forward_residual(t, x, s, graph_features, edge_indices)
@@ -397,12 +404,17 @@ class NonlinearSCI(nn.Module):
         else:
             y_t_bar, y_x, u = self.forward_residual(t, x, s, graph_features, edge_indices)
             output = torch.sum(torch.stack(y_t + y_t_bar + y_x + u), dim=0)
-        return output
+        if not return_components:
+            return output
+        else:
+            return (y_t,) + (y_t_bar,) + (y_x,) + (u,) if self.unobserved_confounder \
+                else (y_t,) + (y_t_bar,) + (y_x,)
     
     def predict(self, t: List[torch.Tensor], x: torch.Tensor, s: torch.Tensor = None, 
-                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None) -> torch.Tensor:
+                graph_features: torch.Tensor = None, edge_indices: torch.Tensor = None, 
+                return_components: bool = False) -> torch.Tensor:
         with torch.no_grad():
-            return self.forward(t, x, s, graph_features, edge_indices)
+            return self.forward(t, x, s, graph_features, edge_indices, return_components)
     
     def initialize_weights(self, method: str = 'kaiming') -> None:
         """
