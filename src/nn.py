@@ -1,4 +1,4 @@
-# networks.py: a file containing all neural network definitions for nonlinear spatial causal inference model
+# nn.py: a file containing all neural network definitions for nonlinear spatial causal inference model
 # SEE LICENSE STATEMENT AT THE END OF THE FILE
 
 import torch
@@ -15,6 +15,7 @@ class Erf(nn.Module):
 
 ACTIVATIONS = {
     "relu": nn.ReLU(),
+    "relu6": nn.ReLU6(),
     "sigmoid": nn.Sigmoid(),
     "tanh": nn.Tanh(),
     "leaky_relu": nn.LeakyReLU(),
@@ -108,7 +109,11 @@ class MLP(nn.Module):
             layers.append(ACTIVATIONS[self.activation])
             if self.p_dropout > 0:
                 layers.append(nn.Dropout(self.p_dropout))
-        layers.append(nn.Linear(hidden_dims[-1], 1))
+        if self.num_hidden_layers > 0:
+            last_layer_dim = hidden_dims[-1] if isinstance(hidden_dims, List) else hidden_dims
+        else:
+            last_layer_dim = self.input_dim
+        layers.append(nn.Linear(last_layer_dim, 1))
         self.mlp_layers = nn.Sequential(*layers)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

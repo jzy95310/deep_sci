@@ -6,7 +6,6 @@ from torch import nn
 
 from typing import List
 from nn import MLP, ConvNet, DeepKrigingMLP, DeepKrigingConvNet
-from gcn import GCN
 from unet import UNet
 from ick.kernels.kernel_fn import *
 from ick.model.ick import ICK
@@ -170,7 +169,7 @@ class NonlinearSCI(nn.Module):
     window_size: int, grid size for neighboring interventions T_bar
     confounder_dim: int, dimension of the confounder X
     f_network_type: str, the model type for f, default to "convnet", can be any of {"mlp", "convnet", 
-        "dk_convnet", "gcn", "unet"}
+        "dk_convnet", "unet"}
     g_network_type: str, the model type for g, default to "mlp", can be any of {"mlp", "convnet",
         "dk_mlp", "dk_convnet"}
     unobserved_confounder: bool, whether to include the unobserved confounder U, default to False
@@ -260,11 +259,11 @@ class NonlinearSCI(nn.Module):
                     dense_hidden_dim=f_dense_hidden_dims, batch_norm=f_batch_norm, p_dropout=f_dropout_ratio, 
                     activation=f_activation
                 ))
-        elif self.f_network_type == "gcn":
-            f_hidden_dims = self.kwargs.get('f_hidden_dims', 16)
-            f_num_hidden_layers = self.kwargs.get('f_num_hidden_layers', 1)
-            setattr(self, "f", GCN(self.num_interventions, f_num_hidden_layers, f_hidden_dims, 
-                                   activation=f_activation))
+        # elif self.f_network_type == "gcn":
+        #     f_hidden_dims = self.kwargs.get('f_hidden_dims', 16)
+        #     f_num_hidden_layers = self.kwargs.get('f_num_hidden_layers', 1)
+        #     setattr(self, "f", GCN(self.num_interventions, f_num_hidden_layers, f_hidden_dims, 
+        #                            activation=f_activation))
         elif self.f_network_type == "unet":
             f_depth = self.kwargs.get('f_depth', 2)
             f_padding = self.kwargs.get('f_padding', 1)
@@ -370,9 +369,9 @@ class NonlinearSCI(nn.Module):
             ti_bar = (t[i] * t_mask).unsqueeze(1)
             if self.f_network_type == "dk_convnet":
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar, s).squeeze()
-            elif self.f_network_type == "gcn":
-                y_t_bar_i = getattr(self, "f")(graph_features, edge_indices).squeeze()
-                y_t_bar_i = y_t_bar_i[y_t_bar_i.shape[0]//2].unsqueeze(0)
+            # elif self.f_network_type == "gcn":
+            #     y_t_bar_i = getattr(self, "f")(graph_features, edge_indices).squeeze()
+            #     y_t_bar_i = y_t_bar_i[y_t_bar_i.shape[0]//2].unsqueeze(0)
             else:
                 y_t_bar_i = getattr(self, f"f_{i+1}")(ti_bar).squeeze()
             y_t_bar.append(y_t_bar_i if len(y_t_bar_i.shape) else y_t_bar_i.unsqueeze(0))

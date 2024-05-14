@@ -94,6 +94,35 @@ class GraphSpatialDataset(SpatialDataset):
             torch.from_numpy(self.edge_indices[idx]).long()
         return batch
 
+class GPSDataset(Dataset):
+    """
+    Defines the dataset for training the Generalized Propensity Score Model
+
+    Arguments
+    --------------
+    t: np.ndarray, A list of numpy arrays containing the interventions for each sample
+    x: np.ndarray, A numpy array containing the confounder for each sample
+    s: np.ndarray, A numpy array containing the spatial information for each sample
+    """
+    def __init__(self, t: np.ndarray, x: np.ndarray, s: np.ndarray) -> None:
+        self.t: np.ndarray = t
+        self.x: np.ndarray = x
+        self.s: np.ndarray = s
+        self._validate_and_preprocess_inputs()
+    
+    def _validate_and_preprocess_inputs(self) -> None:
+        assert len(self.t) == len(self.x), "Interventions and confounders must be the same length"
+    
+    def __len__(self) -> int:
+        return len(self.t)
+    
+    def __getitem__(self, idx) -> Tuple:
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        batch = torch.from_numpy(self.t[idx]).float(), torch.from_numpy(self.x[idx]).float(), \
+            torch.from_numpy(self.s[idx]).float()
+        return batch
+
 def convert_data_to_graph_2d(t: List[np.ndarray]) -> np.ndarray:
     """
     Convert the input data to a 2D graph for graph convolutional network
@@ -203,6 +232,28 @@ def train_val_test_split(t: List, x: np.ndarray, s: np.ndarray, y: np.ndarray, t
     if return_test_indices:
         res += (test_idx,) if block_sampling else (idx[val_idx:],)
     return res
+
+def train_val_test_split_gps(t: np.ndarray, x: np.ndarray, s: np.ndarray, train_size: float = 0.7, val_size: float = 0.15, 
+                             test_size: float = 0.15, shuffle: bool = True, random_state: int = 2020) -> Tuple:
+    """
+    Splits the dataset into training, validation, and test sets for the Generalized Propensity Score Model
+    If shuffle is set to True, the data will be shuffled before splitting
+    """
+    assert train_size + val_size + test_size == 1.0, "Train, validation, and test sizes must sum to 1"
+
+    if shuffle:
+        np.random.seed(random_state)
+        idx = np.random.permutation(len(t))
+        t, x, s = t[idx], x[idx], s[idx]
+    
+    train_idx = int(train_size * len(t))
+    val_idx = int((train_size + val_size) * len(t))
+
+    t_train, x_train, s_train = t[:train_idx], x[:train_idx], s[:train_idx]
+    t_val, x_val, s_val = t[train_idx:val_idx], x[train_idx:val_idx], s[train_idx:val_idx]
+    t_test, x_test, s_test = t[val_idx:], x[val_idx:], s[val_idx:]
+
+    return GPSDataset(t_train, x_train, s_train), GPSDataset(t_val, x_val, s_val), GPSDataset(t_test, x_test, s_test)
 
 # ########################################################################################
 # MIT License
