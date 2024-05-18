@@ -35,6 +35,8 @@ def main(args):
     targets = np.array([x[4] for x in data])
     scaler = StandardScaler()
     targets = scaler.fit_transform(targets.reshape(-1,1))
+    window_size = interventions[0].shape[-1]
+    intervention_min, intervention_max, num_bins = np.min(interventions[0]), np.max(interventions[0]), 100
 
     train_dataset, val_dataset, test_dataset, test_indices = train_val_test_split(
         interventions, confounder, spatial_features, targets, 
@@ -83,29 +85,32 @@ def main(args):
         data_generators=dataloaders, 
         optim=optim, 
         optim_params=optim_params, 
+        window_size=window_size, 
         device=device,
         epochs=epochs,
         patience=patience, 
-        wandb=wandb, 
-        residual_learning=True
+        wandb=wandb
     )
     trainer.train()
     
     # Prediction
-    y_pred_00 = trainer.predict(window_size=interventions[0].shape[-1], direct=False, indirect=False)
-    y_pred_01 = trainer.predict(window_size=interventions[0].shape[-1], direct=False, indirect=True)
-    y_pred_10 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=False)
-    y_pred_11 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=True)
-    y_pred_00 = scaler.inverse_transform(y_pred_00.reshape(-1,1)).squeeze()
-    y_pred_01 = scaler.inverse_transform(y_pred_01.reshape(-1,1)).squeeze()
-    y_pred_10 = scaler.inverse_transform(y_pred_10.reshape(-1,1)).squeeze()
-    y_pred_11 = scaler.inverse_transform(y_pred_11.reshape(-1,1)).squeeze()
-    de_pred = np.mean(y_pred_11 - y_pred_01)
-    ie_pred = np.mean(y_pred_01 - y_pred_00)
-    te_pred = np.mean(y_pred_11 - y_pred_00)
+    y_direct_pred = trainer.predict(mode='direct', t_min=intervention_min, t_max=intervention_max, 
+                                    num_bins=num_bins)
+    y_indirect_pred = trainer.predict(mode='indirect', t_min=intervention_min, t_max=intervention_max, 
+                                      num_bins=num_bins)
+    y_total_pred = trainer.predict(mode='total', t_min=intervention_min, t_max=intervention_max, 
+                                     num_bins=num_bins)
+    y_direct_pred = scaler.inverse_transform(y_direct_pred).squeeze()
+    y_indirect_pred = scaler.inverse_transform(y_indirect_pred).squeeze()
+    y_total_pred = scaler.inverse_transform(y_total_pred).squeeze()
+    de_pred = np.mean(np.mean(y_direct_pred, axis=1), axis=0)
+    ie_pred = np.mean(np.mean(y_indirect_pred, axis=1), axis=0)
+    te_pred = np.mean(np.mean(y_total_pred, axis=1), axis=0)
     
     # Evaluatioon
-    de_true, ie_true, te_true = data_generator.calc_causal_effects(test_indices)
+    de_true, ie_true, te_true = data_generator.calc_causal_effects(
+        test_indices, intervention_min, intervention_max, num_bins
+    )
     print(f"Error on direct effect: {np.abs(de_true - de_pred):.5f}")
     print(f"Error on indirect effect: {np.abs(ie_true - ie_pred):.5f}")
     print(f"Error on total effect: {np.abs(te_true - te_pred):.5f}")

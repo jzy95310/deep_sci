@@ -323,7 +323,7 @@ class Trainer(BaseTrainer):
         return val_loss
     
     def predict(self, mode: str = "total", t_min: float = 0.0, t_max: float = 1.0, num_bins: int = 10, 
-                use_ipw: bool = False, deep_kriging_model: torch.nn.Module = None) -> np.ndarray:
+                weighting: str = None, deep_kriging_model: torch.nn.Module = None) -> np.ndarray:
         """
         Evaluate the model on the test data
 
@@ -336,31 +336,36 @@ class Trainer(BaseTrainer):
         t_min: float, the minimum value of the intervention
         t_max: float, the maximum value of the intervention
         num_bins: int, the number of bins to estimate E[Y|T=t,X=x] for the intervention
-        use_ipw: bool, whether to use inverse propensity weighting for prediction
+        weighting: str, the weighting scheme for the predictions, must be one of None, 'ipw', or 'snipw'
         deep_kriging_model: torch.nn.Module, deep kriging model for transforming the spatial information
         """
         assert mode in ['direct', 'indirect', 'total'], "mode must be one of 'direct', 'indirect', or 'total'"
+        assert weighting in [None, 'ipw', 'snipw'], "weighting must be one of None, 'ipw', or 'snipw'"
         y_test_pred_over_t = []
         t_range = torch.linspace(t_min, t_max, num_bins).to(self.device)
         self.model.eval()
 
         with torch.no_grad():
             for i in range(num_bins):
-                y_test_pred = torch.empty(0).to(self.device)
+                y_test_pred, balancing_weights = torch.empty(0).to(self.device), []
                 for batch in self.data_generators[TEST]:
                     samples = self._assign_device_to_data(*batch)
                     t, x, s, _ = samples[0], samples[1], samples[2], samples[3].view(-1)
                     if deep_kriging_model is not None:
                         s = deep_kriging_model(s)
-                    if use_ipw:
+                    if weighting is not None:
                         if len(t[self.t_idx].shape) == 2:
                             gps = self.gps_model.generate_propensity_score(x, t[self.t_idx][:,self.window_size//2], s)
-                            sw = self.sw_model(t[self.t_idx][:,self.window_size//2])
+                            sw = self.sw_model(t[self.t_idx][:,self.window_size//2].cpu())
                             weights = torch.from_numpy(sw / gps).float().to(self.device)
+                            if weighting == 'snipw':
+                                balancing_weights.append(weights)
                         elif len(t[self.t_idx].shape) == 3:
                             gps = self.gps_model.generate_propensity_score(x, t[self.t_idx][:,self.window_size//2,self.window_size//2], s)
-                            sw = self.sw_model(t[self.t_idx][:,self.window_size//2,self.window_size//2])
+                            sw = self.sw_model(t[self.t_idx][:,self.window_size//2,self.window_size//2].cpu())
                             weights = torch.from_numpy(sw / gps).float().to(self.device)
+                            if weighting == 'snipw':
+                                balancing_weights.append(weights)
                         else:
                             raise ValueError(f"Intervention shape {t.shape} not supported.")
                     # if hasattr(self.model,'f_network_type') and self.model.f_network_type == 'gcn':
@@ -392,11 +397,13 @@ class Trainer(BaseTrainer):
                         #     features = features * feature_mask
                     else:
                         t[self.t_idx] = torch.ones_like(t[self.t_idx]) * t_range[i]
-                    if not use_ipw:
+                    if weighting is None:
                         y_pred = self.model(t, x, s).float()
                     else:
                         y_pred = (self.model(t, x, s) * weights).float()
                     y_test_pred = torch.cat((y_test_pred, y_pred), dim=0)
+                if weighting == 'snipw':
+                    y_test_pred = 1. / torch.mean(torch.cat(balancing_weights, dim=0)) * y_test_pred
                 y_test_pred_over_t.append(y_test_pred.detach().cpu().numpy())
         return np.array(y_test_pred_over_t).T
 

@@ -238,24 +238,41 @@ class SpatialDataset:
 
         return nlcd_weight
     
-    def calc_causal_effects(self, indices):
+    def calc_causal_effects(self, indices, ndvi_min, ndvi_max, num_bins):
         """
         This function calculates the direct, indirect, and total effects for a subset
         of the dataset based on the given indices.
         """
         # Get the data
-        temp_11, temp_01, temp_10, temp_00 = [], [], [], []
+        temp_direct, temp_indirect, temp_total = [], [], []
         for idx in indices:
-            _, _, _, _, t_11, t_01, t_10, t_00 = self[idx]
-            temp_11.append(t_11)
-            temp_01.append(t_01)
-            temp_10.append(t_10)
-            temp_00.append(t_00)
-
-        # Calculate the direct effect
-        direct_effect = np.mean(np.array(temp_11) - np.array(temp_01))
-        indirect_effect = np.mean(np.array(temp_01) - np.array(temp_00))
-        total_effect = np.mean(np.array(temp_11) - np.array(temp_00))
+            temp_direct_i, temp_indirect_i, temp_total_i = [], [], []
+            i, j = self.coords[idx]
+            u = self.U[i, j]
+            _, _, nlcd, ndvi, _, _, _, _ = self[idx]
+            for ndvi_val in np.linspace(ndvi_min, ndvi_max, num_bins):
+                ndvi_window = ndvi.copy()
+                # Set the center of the window to the ndvi_val for direct effect
+                ndvi_window[self.window_size, self.window_size] = ndvi_val
+                temp = self.calc_temp(ndvi_window, nlcd, u)
+                temp_direct_i.append(temp)
+                # Set the all the pixels to the ndvi_val for total effect
+                ndvi_window = np.ones_like(ndvi) * ndvi_val
+                temp = self.calc_temp(ndvi_window, nlcd, u)
+                temp_total_i.append(temp)
+                # Set the center of the window back to the original value for indirect effect
+                ndvi_window[self.window_size, self.window_size] = ndvi[self.window_size, self.window_size]
+                temp = self.calc_temp(ndvi_window, nlcd, u)
+                temp_indirect_i.append(temp)
+            temp_direct.append(temp_direct_i)
+            temp_indirect.append(temp_indirect_i)
+            temp_total.append(temp_total_i)
+        
+        temp_direct, temp_indirect, temp_total = np.array(temp_direct).squeeze(), \
+            np.array(temp_indirect).squeeze(), np.array(temp_total).squeeze()
+        direct_effect = np.mean(np.mean(temp_direct, axis=1), axis=0)
+        indirect_effect = np.mean(np.mean(temp_indirect, axis=1), axis=0)
+        total_effect = np.mean(np.mean(temp_total, axis=1), axis=0)
 
         return direct_effect, indirect_effect, total_effect
 

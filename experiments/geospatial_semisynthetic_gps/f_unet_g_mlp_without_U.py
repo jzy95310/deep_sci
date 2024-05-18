@@ -6,13 +6,14 @@ import wandb
 import dill as pkl
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from scipy.stats import gaussian_kde
 import torch
 from torch.utils.data import DataLoader
 
-from data_generator import train_val_test_split
+from data_generator import train_val_test_split, train_val_test_split_gps
+from trainers import Trainer, GPSModelTrainer
+from gps import GeneralizedPropensityScoreModel
 from models import NonlinearSCI
-from trainers import Trainer
-from spatial_dataset_semisynthetic import SpatialDataset
 
 # Experimental tracking
 wandb.login()
@@ -35,37 +36,78 @@ def main(args):
     targets = np.array([x[4] for x in data])
     scaler = StandardScaler()
     targets = scaler.fit_transform(targets.reshape(-1,1))
+    window_size = interventions[0].shape[-1]
+    intervention_min, intervention_max, num_bins = np.min(interventions[0]), np.max(interventions[0]), 100
 
     train_dataset, val_dataset, test_dataset, test_indices = train_val_test_split(
         interventions, confounder, spatial_features, targets, 
         train_size=0.6, val_size=0.2, test_size=0.2, shuffle=False, 
-        block_sampling=True, return_test_indices=True, graph_input=True
+        block_sampling=True, return_test_indices=True
     )
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     dataloaders = {'train': train_dataloader, 'val': val_dataloader, 'test': test_dataloader}
     
+    # Load data for generalized propensity score (GPS) model
+    train_dataset_gps, val_dataset_gps, _ = train_val_test_split_gps(
+        interventions[0][:,window_size//2,window_size//2][:,np.newaxis], confounder, spatial_features, 
+        train_size=0.8, val_size=0.2, test_size=0.0, shuffle=True
+    )
+    train_loader_gps = DataLoader(train_dataset_gps, batch_size=128, shuffle=True)
+    val_loader_gps = DataLoader(val_dataset_gps, batch_size=128, shuffle=False)
+    dataloaders_gps = {'train': train_loader_gps, 'val': val_loader_gps, 'test': None}
+    
+    # GPS model
+    gps_model = GeneralizedPropensityScoreModel(
+        input_dim=confounder.shape[1]+spatial_features.shape[1],
+        num_hidden_layers=1,
+        hidden_dims=128
+    )
+    
+    # Train GPS model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    optim = "sgd"
+    optim_params = {
+        'lr': 1e-5, 
+        'momentum': 0.99
+    }
+    epochs, patience = args.n_epochs, args.patience
+    trainer = GPSModelTrainer(
+        model=gps_model, 
+        data_generators=dataloaders_gps, 
+        optim=optim, 
+        optim_params=optim_params, 
+        device=device,
+        epochs=epochs,
+        patience=patience
+    )
+    trainer.train()
+    
+    # Stabilized weights model
+    sw_model = gaussian_kde(interventions[0][:,window_size//2,window_size//2])
+    
     # Model definition
     model = NonlinearSCI(
         num_interventions=len(interventions), 
         window_size=interventions[0].shape[-1],  
         confounder_dim=confounder.shape[-1], 
-        f_network_type="gcn",
-        g_network_type="dk_mlp",
-        g_num_basis=4, 
-        g_hidden_dims=[128],
-        unobserved_confounder=True, 
-        kernel_func="rbf", 
-        kernel_param_vals=[1.,5e-3,0.1], 
-        inducing_point_space=[[0.,1.],[0.,1.]]
+        f_network_type="unet", 
+        f_depth=3,
+        f_batch_norm=False, 
+        f_padding=1,
+        f_dropout_ratio=0.0, 
+        g_network_type="mlp", 
+        g_hidden_dims=[128], 
+        g_dropout_ratio=0.0, 
+        unobserved_confounder=False
     )
     model.initialize_weights(method="xavier")
     
     # Experimental tracking
     wandb.init(
         project="deep_sci",
-        name="geospatial_semi_f_gcn_g_dk_mlp_with_U", 
+        name="geospatial_semi_f_unet_g_mlp_without_U_with_GPS", 
         allow_val_change=True
     )
     config = wandb.config
@@ -83,29 +125,34 @@ def main(args):
         data_generators=dataloaders, 
         optim=optim, 
         optim_params=optim_params, 
+        window_size=window_size, 
+        gps_model=gps_model, 
+        sw_model=sw_model, 
         device=device,
         epochs=epochs,
         patience=patience, 
-        wandb=wandb, 
-        residual_learning=False
+        wandb=wandb
     )
     trainer.train()
     
     # Prediction
-    y_pred_00 = trainer.predict(window_size=interventions[0].shape[-1], direct=False, indirect=False)
-    y_pred_01 = trainer.predict(window_size=interventions[0].shape[-1], direct=False, indirect=True)
-    y_pred_10 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=False)
-    y_pred_11 = trainer.predict(window_size=interventions[0].shape[-1], direct=True, indirect=True)
-    y_pred_00 = scaler.inverse_transform(y_pred_00.reshape(-1,1)).squeeze()
-    y_pred_01 = scaler.inverse_transform(y_pred_01.reshape(-1,1)).squeeze()
-    y_pred_10 = scaler.inverse_transform(y_pred_10.reshape(-1,1)).squeeze()
-    y_pred_11 = scaler.inverse_transform(y_pred_11.reshape(-1,1)).squeeze()
-    de_pred = np.mean(y_pred_11 - y_pred_01)
-    ie_pred = np.mean(y_pred_01 - y_pred_00)
-    te_pred = np.mean(y_pred_11 - y_pred_00)
+    y_direct_pred = trainer.predict(mode='direct', t_min=intervention_min, t_max=intervention_max, 
+                                    num_bins=num_bins, weighting='snipw')
+    y_indirect_pred = trainer.predict(mode='indirect', t_min=intervention_min, t_max=intervention_max, 
+                                      num_bins=num_bins, weighting='snipw')
+    y_total_pred = trainer.predict(mode='total', t_min=intervention_min, t_max=intervention_max, 
+                                     num_bins=num_bins, weighting='snipw')
+    y_direct_pred = scaler.inverse_transform(y_direct_pred).squeeze()
+    y_indirect_pred = scaler.inverse_transform(y_indirect_pred).squeeze()
+    y_total_pred = scaler.inverse_transform(y_total_pred).squeeze()
+    de_pred = np.mean(np.mean(y_direct_pred, axis=1), axis=0)
+    ie_pred = np.mean(np.mean(y_indirect_pred, axis=1), axis=0)
+    te_pred = np.mean(np.mean(y_total_pred, axis=1), axis=0)
     
     # Evaluatioon
-    de_true, ie_true, te_true = data_generator.calc_causal_effects(test_indices)
+    de_true, ie_true, te_true = data_generator.calc_causal_effects(
+        test_indices, intervention_min, intervention_max, num_bins
+    )
     print(f"Error on direct effect: {np.abs(de_true - de_pred):.5f}")
     print(f"Error on indirect effect: {np.abs(ie_true - ie_pred):.5f}")
     print(f"Error on total effect: {np.abs(te_true - te_pred):.5f}")
@@ -118,7 +165,7 @@ def main(args):
     })
 
 if __name__ == '__main__':
-    arg_parser = argparse.ArgumentParser(description='f: GCN, g: DeepKriging with MLP, with unobserved confounder')
+    arg_parser = argparse.ArgumentParser(description='f: U-Net, g: MLP, without unobserved confounder')
     arg_parser.add_argument('--batch_size', type=int, default=1)
     arg_parser.add_argument('--optim_name', type=str, default="sgd")
     arg_parser.add_argument('--lr', type=float, default=1e-6)

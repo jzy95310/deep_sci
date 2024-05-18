@@ -34,7 +34,7 @@ class GeneralizedPropensityScoreModel(MLP):
     def generate_propensity_score(self, x: torch.Tensor, t: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
             mean, var = self.forward(x, s)
-            return norm.pdf(t, mean, torch.sqrt(var))
+            return norm.pdf(t.cpu().numpy(), mean.cpu().numpy(), torch.sqrt(var).cpu().numpy())
 
 # ########################################################################################
 # MIT License

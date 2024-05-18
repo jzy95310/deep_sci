@@ -4,7 +4,7 @@ sys.path.insert(0, '.')
 from subprocess import call
 
 JOB_ID = int(os.environ['SLURM_ARRAY_TASK_ID'])
-offset = 0
+offset = 100
 
 job_dict = {
     1+offset: 'linear_without_U.py', 
