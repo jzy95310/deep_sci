@@ -2,10 +2,8 @@ import sys, os
 sys.path.insert(0, '../../src/')
 sys.path.insert(0, '../../data/geospatial_data/')
 import argparse
-import wandb
 import dill as pkl
 import numpy as np
-from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 import torch
 from torch.utils.data import DataLoader
@@ -13,10 +11,6 @@ from torch.utils.data import DataLoader
 from data_generator import train_val_test_split
 from models import NonlinearSCI
 from trainers import Trainer
-from spatial_dataset_real import DurhamDataset
-
-# Experimental tracking
-wandb.login()
 
 np.random.seed(2023)
 torch.manual_seed(2023)
@@ -35,6 +29,7 @@ def main(args):
     targets = np.array([x[5] for x in data])
     scaler = StandardScaler()
     targets = scaler.fit_transform(targets.reshape(-1,1))
+    window_size = interventions[0].shape[-1]
 
     train_dataset, val_dataset, test_dataset = train_val_test_split(
         interventions, confounder, spatial_features, targets, 
@@ -58,14 +53,6 @@ def main(args):
     )
     model.initialize_weights(method="xavier")
     
-    # Experimental tracking
-    wandb.init(
-        project="deep_sci",
-        name="geospatial_real_f_cnn_g_mlp_without_U", 
-        allow_val_change=True
-    )
-    config = wandb.config
-    
     # Training
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     optim = args.optim_name
@@ -79,10 +66,10 @@ def main(args):
         data_generators=dataloaders, 
         optim=optim, 
         optim_params=optim_params, 
+        window_size=window_size,
         device=device,
         epochs=epochs,
-        patience=patience, 
-        wandb=wandb
+        patience=patience
     )
     trainer.train()
     
@@ -91,16 +78,28 @@ def main(args):
         test_data = pkl.load(f)
         data_generator = test_data['data_generator']
         height, width = test_data['height'], test_data['width']
-        
-    window_size = interventions[0].shape[-1]
-    padding_h, padding_w = (height+1-1000)//2, (width+1-1000)//2
-    de_map_ndvi, de_map_albedo, ie_map_ndvi, ie_map_albedo, te_map = [], [], [], [], []
+        print(f"Map height: {height}, map width: {width}")
+    
+    # Visualization of predicted change in temperature over distance
+    assert args.inference_x - args.inference_window_size >= 0 and \
+        args.inference_x + args.inference_window_size < height
+    assert args.inference_y - args.inference_window_size >= 0 and \
+        args.inference_y + args.inference_window_size < width
+    
+    y_map = []
     with torch.no_grad():
-        for i in tqdm(range(padding_h, height-padding_h+1),position=0,leave=True):
+        for i in range(
+            args.inference_x - args.inference_window_size, 
+            args.inference_x + args.inference_window_size + 1
+        ):
+
             batch = [[torch.empty(0).to(device)]*len(interventions),torch.empty(0).to(device),torch.empty(0).to(device)]
-            for j in range(padding_w, width-padding_w+1):
+            for j in range(
+                args.inference_y - args.inference_window_size, 
+                args.inference_y + args.inference_window_size + 1
+            ):
                 sample = data_generator.get_item_by_coords(i,j)
-                s = torch.tensor([i,j]).float().view(1,-1).to(device)
+                s = torch.tensor([sample[0],sample[1]]).float().view(1,-1).to(device)
                 nlcd = torch.tensor(sample[2]).mean(dim=(0,1)).float().view(1,-1).to(device)
                 ndvi = torch.tensor(sample[3]).float().view(1,sample[3].shape[0],-1).to(device)
                 albedo = torch.tensor(sample[4]).float().view(1,sample[3].shape[0],-1).to(device)
@@ -109,36 +108,19 @@ def main(args):
                 batch[1] = torch.cat((batch[1],nlcd),dim=0)
                 batch[2] = torch.cat((batch[2],s),dim=0)
                 del sample, s, nlcd, ndvi, albedo
-            y_pred_11 = model.predict(*batch).cpu().numpy()
-            y_pred_11 = scaler.inverse_transform(y_pred_11.reshape(-1,1)).squeeze()
-            # ndvi: batch[0][0]
-            tmp = batch[0][0][:,window_size//2,window_size//2]
-            batch[0][0][:,window_size//2,window_size//2] = 0.
-            y_pred_01_ndvi = model.predict(*batch).cpu().numpy()
-            y_pred_01_ndvi = scaler.inverse_transform(y_pred_01_ndvi.reshape(-1,1)).squeeze()
-            batch[0][0][:,window_size//2,window_size//2] = tmp
-            # albedo: batch[0][1]
-            batch[0][1][:,window_size//2,window_size//2] = 0.
-            y_pred_01_albedo = model.predict(*batch).cpu().numpy()
-            y_pred_01_albedo = scaler.inverse_transform(y_pred_01_albedo.reshape(-1,1)).squeeze()
-            for i in range(len(batch[0])):
-                batch[0][i] = torch.zeros_like(batch[0][i])
-            y_pred_00 = model.predict(*batch).cpu().numpy()
-            y_pred_00 = scaler.inverse_transform(y_pred_00.reshape(-1,1)).squeeze()
-            de_map_ndvi.append(y_pred_11 - y_pred_01_ndvi)
-            de_map_albedo.append(y_pred_11 - y_pred_01_albedo)
-            ie_map_ndvi.append(y_pred_01_ndvi - y_pred_00)
-            ie_map_albedo.append(y_pred_01_albedo - y_pred_00)
-            te_map.append(y_pred_11 - y_pred_00)
-    
-    de_map_ndvi, de_map_albedo = np.array(de_map_ndvi), np.array(de_map_albedo)
-    ie_map_ndvi, ie_map_albedo = np.array(ie_map_ndvi), np.array(ie_map_albedo)
-    te_map = np.array(te_map)
-    os.makedirs('./results', exist_ok=True)
-    result = {'de_ndvi': de_map_ndvi, 'de_albedo': de_map_albedo, 
-              'ie_ndvi': ie_map_ndvi, 'ie_albedo': ie_map_albedo, 'te': te_map}
-    with open('./results/results_f_cnn_g_mlp_without_U.pkl', 'wb') as f:
-        pkl.dump(result, f)
+            y_pred = model.predict(*batch).cpu().numpy()
+            y_pred = scaler.inverse_transform(y_pred.reshape(-1,1)).squeeze()
+            y_map.append(y_pred)
+            
+    y_map = np.array(y_map)
+    if os.path.exists('./results_geospatial_real.pkl'):
+        with open('./results_geospatial_real.pkl', 'rb') as fp:
+            res = pkl.load(fp)
+        res['f_cnn_g_mlp_without_U'] = y_map
+    else:
+        res = {'f_cnn_g_mlp_without_U': y_map}
+    with open('./results_geospatial_real.pkl', 'wb') as fp:
+        pkl.dump(res, fp)
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='f: CNN, g: MLP, without unobserved confounder')
@@ -149,5 +131,8 @@ if __name__ == '__main__':
     arg_parser.add_argument('--weight_decay', type=float, default=0.0)
     arg_parser.add_argument('--n_epochs', type=int, default=1000)
     arg_parser.add_argument('--patience', type=int, default=20)
+    arg_parser.add_argument('--inference_x', type=int, default=1000)
+    arg_parser.add_argument('--inference_y', type=int, default=1000)
+    arg_parser.add_argument('--inference_window_size', type=int, default=50)
     args = arg_parser.parse_known_args()[0]
     main(args)
