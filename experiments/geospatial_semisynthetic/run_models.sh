@@ -9,4 +9,4 @@
 
 export WANDB__SERVICE_WAIT=300
 
-srun singularity exec --nv --bind /work/zj63 /datacommons/carlsonlab/Containers/multimodal_gp.simg python run_models.py
+srun --cpu_bind=cores singularity exec --nv --bind /work/zj63 /datacommons/carlsonlab/Containers/multimodal_gp.simg python run_models.py
