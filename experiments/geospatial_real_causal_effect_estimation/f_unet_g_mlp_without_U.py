@@ -101,14 +101,17 @@ def main(args):
         
     window_size = interventions[0].shape[-1]
     padding_h, padding_w = (height+1-1000)//2, (width+1-1000)//2
+    nlcd_map = []
     de_map_ndvi, de_map_albedo, ie_map_ndvi, ie_map_albedo, te_map = [], [], [], [], []
     with torch.no_grad():
         for i in tqdm(range(padding_h, height-padding_h+1),position=0,leave=True):
             batch = [[torch.empty(0).to(device)]*len(interventions),torch.empty(0).to(device),torch.empty(0).to(device)]
+            nlcd_batch = []
             for j in range(padding_w, width-padding_w+1):
                 sample = data_generator.get_item_by_coords(i,j)
                 s = torch.tensor([i,j]).float().view(1,-1).to(device)
                 nlcd = torch.tensor(sample[2]).mean(dim=(0,1)).float().view(1,-1).to(device)
+                nlcd_batch.append(np.argmax(sample[2][window_size//2,window_size//2,:]))
                 ndvi = torch.tensor(sample[3]).float().view(1,sample[3].shape[0],-1).to(device)
                 albedo = torch.tensor(sample[4]).float().view(1,sample[3].shape[0],-1).to(device)
                 batch[0][0] = torch.cat((batch[0][0],ndvi),dim=0)
@@ -137,13 +140,16 @@ def main(args):
             ie_map_ndvi.append(y_pred_01_ndvi - y_pred_00)
             ie_map_albedo.append(y_pred_01_albedo - y_pred_00)
             te_map.append(y_pred_11 - y_pred_00)
+            nlcd_map.append(nlcd_batch)
     
     de_map_ndvi, de_map_albedo = np.array(de_map_ndvi), np.array(de_map_albedo)
     ie_map_ndvi, ie_map_albedo = np.array(ie_map_ndvi), np.array(ie_map_albedo)
     te_map = np.array(te_map)
+    nlcd_map = np.array(nlcd_map)
     os.makedirs('./results', exist_ok=True)
     result = {'de_ndvi': de_map_ndvi, 'de_albedo': de_map_albedo, 
-              'ie_ndvi': ie_map_ndvi, 'ie_albedo': ie_map_albedo, 'te': te_map}
+              'ie_ndvi': ie_map_ndvi, 'ie_albedo': ie_map_albedo, 
+              'te': te_map, 'nlcd': nlcd_map}
     with open('./results/results_f_unet_g_mlp_without_U.pkl', 'wb') as f:
         pkl.dump(result, f)
 
