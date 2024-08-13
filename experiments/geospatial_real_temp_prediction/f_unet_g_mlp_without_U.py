@@ -2,6 +2,7 @@ import sys, os
 sys.path.insert(0, '../../src/')
 sys.path.insert(0, '../../data/geospatial_data/')
 import argparse
+from tqdm import tqdm
 import dill as pkl
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -93,16 +94,9 @@ def main(args):
     
     y_map = []
     with torch.no_grad():
-        for i in range(
-            args.inference_x - args.inference_window_size, 
-            args.inference_x + args.inference_window_size + 1
-        ):
-
+        for i in tqdm(range(200,2201), position=0, leave=True):
             batch = [[torch.empty(0).to(device)]*len(interventions),torch.empty(0).to(device),torch.empty(0).to(device)]
-            for j in range(
-                args.inference_y - args.inference_window_size, 
-                args.inference_y + args.inference_window_size + 1
-            ):
+            for j in range(200,2201):
                 sample = data_generator.get_item_by_coords(i,j)
                 s = torch.tensor([sample[0],sample[1]]).float().view(1,-1).to(device)
                 nlcd = torch.tensor(sample[2]).mean(dim=(0,1)).float().view(1,-1).to(device)

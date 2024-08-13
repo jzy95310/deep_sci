@@ -3,7 +3,7 @@
 #SBATCH --job-name=sci_geospatial
 #SBATCH --output=sci_geospatial_%a.out
 #SBATCH --error=sci_geospatial_%a.err
-#SBATCH -a 1-10
+#SBATCH -a 1,2,4,6,7,9
 #SBATCH -c 2
 #SBATCH --nice
 
