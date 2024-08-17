@@ -1,4 +1,4 @@
-import sys
+import os, sys
 sys.path.insert(0, '../../src/')
 sys.path.insert(0, '../../data/geospatial_data/')
 import argparse
@@ -150,6 +150,21 @@ def main(args):
     de_pred = np.mean(np.mean(y_direct_pred, axis=1), axis=0)
     ie_pred = np.mean(np.mean(y_indirect_pred, axis=1), axis=0)
     te_pred = np.mean(np.mean(y_total_pred, axis=1), axis=0)
+
+    # Inference on unobserved confounder
+    with torch.no_grad():
+        u_pred_map = []
+        for i in range(2253):
+            sx = (torch.ones(2307) * i / 2253).to(device)
+            sy = (torch.linspace(0, 2306, 2307) / 2307).to(device)
+            s_indices = torch.stack([sx, sy], dim=1)
+            u_pred = model.gp_unobserved_confounder([s_indices])
+            u_pred_map.append(u_pred.squeeze().cpu().numpy())
+        u_pred_map = np.array(u_pred_map)
+    
+    if not os.path.exists("./results_u"):
+        os.makedirs("./results_u")
+    np.save("./results_u/u_pred_map_f_cnn_g_dk_mlp_with_U.npy", u_pred_map)
     
     # Evaluatioon
     de_true, ie_true, te_true = data_generator.calc_causal_effects(
